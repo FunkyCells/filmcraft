@@ -477,3 +477,14 @@ Markers may store an optional `url` independently of their name and notes. Older
 load with an empty URL. Schema v17 prevents older builds from silently dropping links
 on save. Changing marker type retains the address. Project loading never opens it; the
 Edit Marker dialog offers explicit HTTP(S) browser opening for Web Link markers.
+
+## Clip Log (`logs`, not yet schema-versioned)
+
+`logs` maps a media item id to its Clip Log rows: `{id, start, end, content?, include?, order?, notes?}`.
+`start` and `end` are media ticks (`end` exclusive, `end > start`); `include` is `true`, `false` or absent
+(undecided); `order` is the position in the edit (1 first, not required to be unique). The key is omitted
+when empty, and files without it load with no rows. The schema number has not been raised for it: the
+migration table lives in `craft-fcproj-format`, so a bump needs a change there first. Until then a build
+older than this field drops the rows when it saves the project. On load, empty, inverted or oversize rows
+are dropped and each clip keeps at most 100000 rows.
+

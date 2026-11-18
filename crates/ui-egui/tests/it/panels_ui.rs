@@ -185,6 +185,7 @@ fn every_panel_opens_from_the_window_menu() {
         ("Progress", "progress.showFinished"),
         ("ReferenceMonitor", "reference.gang"),
         ("ProjectNotes", "notes.text"),
+        ("ClipLog", "clip_log.add"),
     ] {
         d.ok("ui.menu.invoke", json!({"id": format!("window.panel.{panel}")}));
         d.frames(3);
@@ -497,6 +498,135 @@ fn project_notes_panel_types_into_the_project_with_undo() {
     d.exec("project.setNotes", json!({"text": "From the script"}));
     d.frames(2);
     assert_eq!(d.label("notes.text"), "From the script");
+}
+
+/// The Clip Log panel shows the rows of the project, and every cell edit is one undoable `log.edit`
+/// or `log.setInclude`; rows added by an agent appear in it.
+#[test]
+fn clip_log_panel_shows_and_edits_rows_with_undo() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let project = &d.app().session.project;
+        let media = project.items.values().find(|i| i.as_media().is_some()).unwrap();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, if duration >= 4 { duration / 2 } else { 1000 })
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    d.frames(3);
+    assert!(d.has("clip_log.empty"), "an empty log says how to start: {:?}", d.ids("clip_log."));
+    let entry = d.exec("log.add", json!({"item": item.0, "start": 0, "end": end, "content": ""}))["entry"].as_u64().unwrap();
+    d.frames(3);
+    for column in ["select", "file", "start", "stop", "content", "include", "order"] {
+        let id = format!("clip_log.row.{entry}.{column}");
+        assert!(d.has(&id), "{id} missing: {:?}", d.ids("clip_log."));
+    }
+    let content = |d: &mut Driver| d.app().session.project.logs[&item][0].content.clone();
+    // type into Content and commit with Enter: one undo step
+    let undo0 = d.app().session.history.undo.len();
+    d.click(&format!("clip_log.row.{entry}.content"));
+    d.ok("ui.type", json!({"text": "interview intro"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    assert_eq!(content(&mut d), "interview intro");
+    assert_eq!(d.app().session.history.undo.len(), undo0 + 1);
+    // Include cycles undecided -> yes -> no
+    d.click(&format!("clip_log.row.{entry}.include"));
+    d.frames(3);
+    assert_eq!(d.app().session.project.logs[&item][0].include, Some(true));
+    d.click(&format!("clip_log.row.{entry}.include"));
+    d.frames(3);
+    assert_eq!(d.app().session.project.logs[&item][0].include, Some(false));
+    // undo walks back through the edits
+    for _ in 0..3 {
+        d.exec("edit.undo", json!({}));
+    }
+    d.frames(2);
+    assert_eq!(content(&mut d), "");
+    assert_eq!(d.app().session.project.logs[&item][0].include, None);
+    // ticking the row and pressing Delete removes it
+    d.click(&format!("clip_log.row.{entry}.select"));
+    d.frames(2);
+    assert!(d.has("clip_log.export"));
+    d.click("clip_log.number");
+    d.frames(2);
+    assert_eq!(d.app().session.project.logs[&item][0].order, Some(1), "Number gives the next unused number");
+    d.click("clip_log.delete");
+    d.frames(3);
+    assert!(d.app().session.project.logs.is_empty());
+    assert!(d.has("clip_log.empty"));
+}
+
+/// Typing a number another row already has asks first; confirming moves the others up by one.
+#[test]
+fn clip_log_order_in_use_asks_before_renumbering() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let media = d.app().session.project.items.values().find(|i| i.as_media().is_some()).unwrap().clone();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, if duration >= 4 { duration / 2 } else { 1000 })
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    let a = d.exec("log.add", json!({"item": item.0, "start": 0, "end": end, "order": 1}))["entry"].as_u64().unwrap();
+    let b = d.exec("log.add", json!({"item": item.0, "start": 0, "end": end}))["entry"].as_u64().unwrap();
+    d.frames(3);
+    let order = |d: &mut Driver, id: u64| d.app().session.project.logs[&item].iter().find(|e| e.id.0 == id).and_then(|e| e.order);
+    let type_one = |d: &mut Driver| {
+        d.click(&format!("clip_log.row.{b}.order"));
+        d.ok("ui.type", json!({"text": "1"}));
+        d.frames(2);
+        d.ok("ui.key", json!({"key": "Enter"}));
+        d.frames(3);
+    };
+    type_one(&mut d);
+    assert!(d.has("clip_log.confirm.ok"), "1 is in use: {:?}", d.ids("clip_log."));
+    assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(1), None), "nothing changes before the user agrees");
+    d.click("clip_log.confirm.cancel");
+    d.frames(3);
+    assert!(!d.has("clip_log.confirm.ok"));
+    assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(1), None));
+    type_one(&mut d);
+    d.click("clip_log.confirm.ok");
+    d.frames(3);
+    assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(2), Some(1)));
+    // 0 and negative numbers are refused
+    for bad in ["0", "-2"] {
+        d.click(&format!("clip_log.row.{a}.order"));
+        d.ok("ui.key", json!({"key": "Backspace"}));
+        d.ok("ui.type", json!({"text": bad}));
+        d.ok("ui.key", json!({"key": "Enter"}));
+        d.frames(3);
+        assert_eq!(order(&mut d, a), Some(2), "{bad} is not an order");
+    }
+}
+
+/// Double-clicking an empty Order cell takes the next free number, ticked or not; a cell that has a
+/// number is left alone.
+#[test]
+fn clip_log_double_click_numbers_an_empty_order_cell() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let media = d.app().session.project.items.values().find(|i| i.as_media().is_some()).unwrap().clone();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, if duration >= 4 { duration / 2 } else { 1000 })
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    let a = d.exec("log.add", json!({"item": item.0, "start": 0, "end": end, "order": 4}))["entry"].as_u64().unwrap();
+    let b = d.exec("log.add", json!({"item": item.0, "start": 0, "end": end}))["entry"].as_u64().unwrap();
+    d.frames(3);
+    let order = |d: &mut Driver, id: u64| d.app().session.project.logs[&item].iter().find(|e| e.id.0 == id).and_then(|e| e.order);
+    d.ok("ui.click", json!({"id": format!("clip_log.row.{b}.order"), "count": 2}));
+    d.frames(4);
+    assert_eq!(order(&mut d, b), Some(5), "the next number after the largest in use");
+    assert!(!d.app().session.project.logs[&item].is_empty());
+    // a cell that has a number does nothing
+    d.ok("ui.click", json!({"id": format!("clip_log.row.{a}.order"), "count": 2}));
+    d.frames(4);
+    assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(4), Some(5)));
+    // and leaving the numbered cell does not wipe it
+    d.click(&format!("clip_log.row.{a}.content"));
+    d.frames(3);
+    assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(4), Some(5)));
 }
 
 #[test]

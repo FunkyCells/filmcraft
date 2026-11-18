@@ -13,6 +13,7 @@
 pub mod aaf_omf;
 pub mod autosave;
 pub mod captions;
+pub mod clip_log;
 pub mod clip_ops;
 pub mod color;
 pub mod commands;
@@ -1467,6 +1468,8 @@ mod media_watch_tests;
 mod mixer_tests;
 #[cfg(test)]
 mod multicam_tests;
+#[cfg(test)]
+mod clip_log_tests;
 #[cfg(test)]
 mod named_targets_tests;
 #[cfg(test)]

@@ -4,6 +4,7 @@
 pub mod audio_fx_editor;
 pub mod caption_export;
 pub mod clip_dialogs;
+pub mod clip_log;
 pub mod clip_mismatch;
 pub mod color_dialogs;
 pub mod dialogs;
@@ -167,6 +168,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rect)
         PanelKind::EssentialSound => essential_sound::show(app, ui, rect),
         PanelKind::TextToSpeech => tts::show(app, ui, rect),
         PanelKind::ProjectNotes => notes::show(app, ui, rect),
+        PanelKind::ClipLog => clip_log::show(app, ui, rect),
         other => crate::dock::placeholder(ui, rect, &app.tokens, &tlf!("{panel} — coming in a later milestone", panel = crate::i18n::t(other.title()))),
     }
 }

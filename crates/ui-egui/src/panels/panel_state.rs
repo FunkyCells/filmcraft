@@ -14,8 +14,33 @@ pub struct PanelsState {
     pub reference: ReferenceState,
     pub events: EventsState,
     pub progress: ProgressState,
+    pub clip_log: ClipLogState,
     /// Preferred selection for Metadata and Info; inspector focus does not replace it.
     pub inspector_source: InspectorSource,
+}
+
+/// Clip Log panel: the filter text and the view (not the ticks, a pending confirmation or a drag).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ClipLogState {
+    /// Only rows whose file or content contains this text (case-insensitive) are shown.
+    pub filter: String,
+    /// Show the rows that go into the edit (Include = Yes) in edit order, with drag to reorder.
+    pub ordered: bool,
+    /// Order view: add a sound crossfade at each cut when building, and how long (seconds; 0 = 1).
+    pub fade_sound: bool,
+    pub fade_sound_secs: f64,
+    /// The same for the picture (a dip to black).
+    pub fade_image: bool,
+    pub fade_image_secs: f64,
+    #[serde(skip)]
+    pub selected: std::collections::BTreeSet<u64>,
+    /// A typed Order that another row uses: (entry, number), waiting for the user to confirm.
+    #[serde(skip)]
+    pub pending_order: Option<(u64, u32)>,
+    /// The row being dragged in the ordered view.
+    #[serde(skip)]
+    pub dragging: Option<u64>,
 }
 
 /// The last selection panel used by the item inspectors. Only the source is retained, so

@@ -161,6 +161,7 @@ fn validate_loaded(mut loaded: Loaded) -> Result<Loaded, FormatError> {
             sequence.check_bounds().map_err(|e| FormatError::Corrupt(format!("sequence `{}`: {e}", item.name)))?;
         }
     }
+    repair_logs(&mut loaded.project);
     // Every new id is `next_id`, read from the file as is. One that lags behind the ids in it (an
     // older build, a hand edit) would hand out an id in use, and the new item replace the old (#2809).
     let project = &mut loaded.project;
@@ -176,9 +177,47 @@ fn validate_loaded(mut loaded: Loaded) -> Result<Loaded, FormatError> {
     Ok(loaded)
 }
 
+/// Clip Log rows are repaired, not refused: an empty, inverted or oversize row is dropped (with a
+/// warning), and a clip keeps at most [`filmcraft_project::MAX_LOG_ENTRIES_PER_ITEM`] rows, so one
+/// damaged row cannot lose the project and a hostile file cannot fill memory with rows.
+fn repair_logs(project: &mut Project) {
+    let max_text = filmcraft_project::MAX_LOG_TEXT_BYTES;
+    for (item, rows) in project.logs.iter_mut() {
+        let before = rows.len();
+        rows.retain(|e| e.start.0 >= 0 && e.end > e.start && e.content.len() <= max_text && e.notes.len() <= max_text);
+        rows.truncate(filmcraft_project::MAX_LOG_ENTRIES_PER_ITEM);
+        if rows.len() != before {
+            log::warn!("clip log of item {}: dropped {} unusable rows", item.0, before - rows.len());
+        }
+    }
+    project.logs.retain(|_, rows| !rows.is_empty());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unusable_clip_log_rows_are_dropped_on_load() {
+        use filmcraft_project::{ItemId, LogEntry, LogEntryId};
+        use filmcraft_time::Tick;
+        let row = |id: u64, start: i64, end: i64| LogEntry {
+            id: LogEntryId(id),
+            start: Tick(start),
+            end: Tick(end),
+            content: String::new(),
+            include: None,
+            order: None,
+            notes: String::new(),
+        };
+        let mut p = Project::new("Log");
+        p.logs.insert(ItemId(5), vec![row(10, 0, 100), row(11, 50, 50), row(12, 90, 10), row(13, -5, 10)]);
+        p.logs.insert(ItemId(6), vec![row(14, 7, 3)]);
+        let loaded = decode(&encode(&p, false)).unwrap().project;
+        assert_eq!(loaded.logs.len(), 1, "an item left without rows keeps no entry");
+        assert_eq!(loaded.logs[&ItemId(5)].iter().map(|e| e.id.0).collect::<Vec<_>>(), vec![10]);
+        assert!(loaded.next_id > 10, "the id counter is past every row that was kept");
+    }
 
     #[test]
     fn schema_version_matches_table() {

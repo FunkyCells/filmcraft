@@ -288,6 +288,39 @@ Frame Rate (exact numerator/denominator), Author, and URL. Custom colors use can
 preset Color uses the user's display label from Settings ▸ Labels. Timecodes include the sequence's start timecode and
 drop-frame setting; End is exclusive, and a point marker's End equals Start. Duration Frames is
 rounded down; tick columns preserve sub-frame timing (254016000000 ticks per second).
+
+**Clip Log.** Rows noted while watching raw footage, several per media item:
+`log.list {item?}`, `log.add {item?, start, end, content?, include?, order?, notes?}`,
+`log.addFromSource {item?, content?, ...}` (uses the Source monitor's In/Out, or the whole clip when
+unset), `log.edit {entry|entries, start?, end?, content?, include?, order?, notes?}`,
+`log.setInclude {entries, include}`, `log.setOrder {entries}` (numbers the listed rows 1, 2, 3…),
+`log.insertOrder {entry, order}` (the row takes that number; if another row has it, every other row numbered that or higher moves up by one),
+`log.numberNext {entries}` (rows without a number get the next unused numbers; others keep theirs),
+`log.buildSequence {name?, bin?, fadeVideo?, fadeAudio?}` (a new sequence of the rows with include = yes, back to back, by `order`; rows without a number follow in file and time order; one undo step; refused when no row is included; `fadeVideo` / `fadeAudio` = seconds 0.1–10 add a dip to black / a constant-power crossfade centered on each cut, `fadesSkipped` counts cuts where one could not be added),
+`log.delete {entry|entries}`, `log.exportCsv {path, item?}` and `log.importCsv {path}` (adds the rows
+of a CSV: an export, or a spreadsheet with the same headers in any order, separated by commas,
+semicolons or tabs; a row goes to the clip with that `Path`, else the one clip with that `File` name,
+with `Item ID` as the tie-break between clips of the same name; rows that match no clip or have a bad
+time, include or order are skipped and listed in `problems`; rows equal to an existing one in clip,
+start and stop are skipped as `duplicates`; one undo step). Times are media ticks, `end`
+exclusive; `include` takes `true`, `false` or `null` (undecided). Every call is one undo step and a
+refused call changes nothing. `log.exportCsv` columns: File, Item ID, Entry ID, Start Timecode,
+End Timecode, Start Ticks, End Ticks, Content, Include, Order, Notes, Path (the file's full path,
+folder included); text starting like a
+spreadsheet formula is prefixed with `'`.
+
+The **Clip Log** panel (Window ▸ Clip Log) is the table for these rows: File, Start, Stop, Content,
+Include and Order, with Add from Source, Include, Exclude, Number, Delete, Import CSV…, Export CSV… and a filter (Include, Exclude, Number and Delete appear only while rows
+are ticked). In **Order view** the toolbar has only the Order view checkbox, the Fade sound and Fade image
+checks (each with a 0.5/1/2/3/4 s dropdown once ticked) and Build Sequence. Typing an Order that another row has asks first (the rows numbered that or higher move up
+by one). Double-clicking an empty Order cell gives that row the next free number (`log.numberNext`). **Order view** lists the rows set to Yes in edit order; dragging a row by its handle and
+dropping it renumbers those rows 1, 2, 3… (`log.setOrder`; rows not set to Yes keep their numbers).
+The columns share the
+panel width (File and Content twice as wide) and a cell's full text shows on hover. Each
+committed cell edit is one of the commands above (a text cell commits on Enter, Tab or losing
+focus; Start and Stop take `hh:mm:ss:ff` or a frame count). Automation ids: `clip_log.add`,
+`clip_log.include`, `clip_log.exclude`, `clip_log.number`, `clip_log.select_all`, `clip_log.import`, `clip_log.build`, `clip_log.export`, `clip_log.delete`, `clip_log.filter`,
+`clip_log.empty` and `clip_log.row.<entry>.<select|file|start|stop|content|include|order>`.
 An empty sequence writes just the header. User text starting with a spreadsheet formula character
 (`=`, `+`, `-`, `@`, including after whitespace) gets a leading apostrophe in the exported cell.
 The export leaves the project, dirty flag and undo history untouched, works with locked tracks,

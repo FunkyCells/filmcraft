@@ -55,6 +55,7 @@ macro_rules! id_type {
     };
 }
 
+pub mod clip_log;
 mod item;
 mod label;
 mod sequence;
@@ -63,6 +64,7 @@ mod source;
 mod track;
 mod view;
 
+pub use clip_log::{LogEntry, MAX_LOG_ENTRIES_PER_ITEM, MAX_LOG_TEXT_BYTES};
 pub use item::{AudioChannelMap, Bin, BinEntry, Interpretation, ItemKind, MediaClip, MediaIdentity, MediaRef, ProjectItem};
 pub use label::Label;
 pub(crate) use sequence::bounded_time_range;
@@ -82,6 +84,7 @@ id_type!(TrackId);
 id_type!(ClipId);
 id_type!(TransitionId);
 id_type!(MarkerId);
+id_type!(LogEntryId);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Project {
@@ -120,6 +123,11 @@ pub struct Project {
     /// instructions for whoever opens it next, frame numbers and the like. Schema v15.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// The Clip Log: rows noted while watching raw footage, keyed by the media item they describe.
+    /// Not schema-bumped yet: files without it load as empty, but builds older than this field drop
+    /// it when they save.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub logs: BTreeMap<ItemId, Vec<LogEntry>>,
 }
 
 impl Default for Project {
@@ -149,6 +157,7 @@ impl Project {
             source_graphics: BTreeMap::new(),
             narrations: BTreeMap::new(),
             notes: String::new(),
+            logs: BTreeMap::new(),
         }
     }
 
@@ -177,7 +186,8 @@ impl Project {
         }
         self.search_bins.iter().for_each(|b| see(b.id.0));
         // deleting an item leaves these entries behind: a new item taking that id would inherit them
-        self.transcripts.keys().chain(self.source_graphics.keys()).chain(self.narrations.keys()).for_each(|i| see(i.0));
+        self.transcripts.keys().chain(self.source_graphics.keys()).chain(self.narrations.keys()).chain(self.logs.keys()).for_each(|i| see(i.0));
+        self.logs.values().flatten().for_each(|e| see(e.id.0));
         // `lut.import` names LUTs `lut<id>`
         self.luts.iter().filter_map(|l| l.id.strip_prefix("lut")?.parse().ok()).for_each(&mut see);
         fn mixer(m: &MixerStrip) -> impl Iterator<Item = u64> + '_ {

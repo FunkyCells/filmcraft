@@ -58,7 +58,8 @@ impl FilmcraftApp {
                 | PanelKind::AudioTrackMixer
                 | PanelKind::Text
                 | PanelKind::ReferenceMonitor
-                | PanelKind::Timecode => PanelKind::Source,
+                | PanelKind::Timecode
+                | PanelKind::ClipLog => PanelKind::Source,
                 _ => PanelKind::Project,
             };
             self.ui.dock.open_near(p, near);
