@@ -416,6 +416,27 @@ mod tests {
         }
     }
 
+    /// The SPS / PPS of a 1080i AVCHD camcorder clip: High profile, `frame_mbs_only_flag` 0 (field
+    /// pictures), coded 1920x1088 and cropped to 1920x1080 (`frame_crop_bottom_offset` 2, which
+    /// counts in units of four rows for field-coded streams).
+    #[test]
+    fn a_1080i_field_coded_sps_reads_as_interlaced_1080() {
+        let sps = [
+            0x27, 0x64, 0x00, 0x28, 0xad, 0x00, 0x2d, 0xb0, 0x1e, 0x01, 0x11, 0xf7, 0x80, 0x88, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x01, 0x97, 0x26, 0x00,
+            0x00, 0x80, 0x2c, 0x80, 0x03, 0x34, 0x54, 0x1e, 0x30, 0x64, 0xc0, 0x00, 0x10, 0x05, 0x90, 0x00, 0x66, 0x8a, 0x83, 0xc6, 0x05,
+        ];
+        let pps = [0x28, 0xea, 0x40, 0x29, 0xce, 0x51, 0xc7, 0x15, 0x14, 0x10, 0x12, 0x26, 0x30, 0x41, 0x05, 0x45, 0x12, 0x08, 0x8c, 0xc4];
+        let mut avcc = vec![1, sps[1], sps[2], sps[3], 0xff, 0xe1, 0, sps.len() as u8];
+        avcc.extend_from_slice(&sps);
+        avcc.extend_from_slice(&[1, 0, pps.len() as u8]);
+        avcc.extend_from_slice(&pps);
+        let info = NalStreamInfo::from_avcc(&avcc).unwrap();
+        assert!(info.interlaced);
+        assert_eq!((info.profile_idc, info.chroma_format_idc, info.bit_depth_luma), (100, 1, 8));
+        assert_eq!(info.coded, (1920, 1088));
+        assert_eq!(info.crop, (0, 0, 1920, 1080), "the crop of a field-coded stream counts in units of four rows");
+    }
+
     fn hevc_info(parameter_sets: Vec<Vec<u8>>) -> NalStreamInfo {
         NalStreamInfo {
             codec: NalCodec::Hevc,

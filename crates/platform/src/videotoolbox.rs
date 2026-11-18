@@ -259,9 +259,8 @@ fn copy_out(pb: &CVImageBuffer, l: &Layout) -> std::result::Result<VideoFrame, S
 
 /// The layout for a stream, or why VideoToolbox is not used for it.
 fn layout(info: &NalStreamInfo) -> std::result::Result<Layout, String> {
-    if info.interlaced {
-        return Err("field-coded H.264".into());
-    }
+    // Field-coded (PAFF) H.264 is taken: VideoToolbox decodes a field pair as one picture. Our own
+    // decoder cannot decode it, so there is no software reference to compare against.
     if info.bit_depth_luma != info.bit_depth_chroma || !matches!(info.bit_depth_luma, 8 | 10) {
         return Err(format!("{}-bit luma / {}-bit chroma", info.bit_depth_luma, info.bit_depth_chroma));
     }
@@ -301,10 +300,15 @@ impl Session {
             decompressionOutputRefCon: &*shared as *const Shared as *mut c_void,
         };
         let mut out: *mut VTDecompressionSession = std::ptr::null_mut();
+        // Field-coded H.264: Apple's hardware decoders refuse it (VTDecompressionSessionCreate fails
+        // with -12911 when hardware is required), so the session is created without the
+        // requirement and VideoToolbox picks the decoder it has: its software decoder decodes field
+        // pictures. Our own decoder cannot, so there is nothing else to fall back to.
+        let spec = if info.interlaced { None } else { Some(spec.as_ref()) };
         // SAFETY: every pointer is valid for the call (VideoToolbox copies the callback record);
         // the refcon points into `shared`, which the returned `Session` keeps alive until the
         // session is invalidated.
-        let status = unsafe { VTDecompressionSession::create(None, &format, Some(spec.as_ref()), Some(attrs.as_ref()), &record, NonNull::from(&mut out)) };
+        let status = unsafe { VTDecompressionSession::create(None, &format, spec, Some(attrs.as_ref()), &record, NonNull::from(&mut out)) };
         let session = NonNull::new(out).filter(|_| status == 0).ok_or_else(|| format!("VTDecompressionSessionCreate failed ({status})"))?;
         // SAFETY: a created session is returned retained (+1); `CFRetained` takes that reference over.
         let session = unsafe { CFRetained::from_raw(session) };

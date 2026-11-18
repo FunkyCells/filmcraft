@@ -59,9 +59,8 @@ impl From<FrameStreamInfo> for Stream {
 
 /// What the decoder needs for an `avcC` / `hvcC` stream, or why it is declined.
 pub fn plan_nal(info: &NalStreamInfo) -> Result<Plan, String> {
-    if info.interlaced {
-        return Err("field-coded H.264".into());
-    }
+    // Field-coded (PAFF) H.264 is taken: the decoder MFT outputs a field pair as one picture. Our
+    // own decoder cannot decode it, so there is no software reference to compare against.
     if info.chroma_format_idc != 1 {
         return Err(format!("chroma_format_idc {}", info.chroma_format_idc));
     }
@@ -137,7 +136,7 @@ impl Stream {
             Self::Nal(info) => {
                 let (_, _, w, h) = info.crop;
                 match info.codec {
-                    NalCodec::H264 => Spec { subtype: MFVideoFormat_H264, label: "H.264", missing: "", size: (w, h), format, attrs: Vec::new() },
+                    NalCodec::H264 => Spec { subtype: MFVideoFormat_H264, label: "H.264", missing: "", size: (w, h), format, attrs: Vec::new(), interlaced: info.interlaced },
                     NalCodec::Hevc => Spec {
                         subtype: MFVideoFormat_HEVC,
                         label: "HEVC",
@@ -147,6 +146,7 @@ impl Stream {
                         // the HEVC decoder lists P010 output only when told the stream is Main 10
                         // (eAVEncH265VProfile_Main_420_8 = 1, eAVEncH265VProfile_Main_420_10 = 2)
                         attrs: vec![(MF_MT_MPEG2_PROFILE, Attr::U32(if format == SurfaceFormat::P010 { 2 } else { 1 }))],
+                        interlaced: false,
                     },
                 }
             }
@@ -158,6 +158,7 @@ impl Stream {
                     size: info.size,
                     format,
                     attrs: Vec::new(),
+                    interlaced: false,
                 },
                 FrameCodec::Av1 => Spec {
                     subtype: MFVideoFormat_AV1,
@@ -166,6 +167,7 @@ impl Stream {
                     size: info.size,
                     format,
                     attrs: Vec::new(),
+                    interlaced: false,
                 },
             },
         }
@@ -287,9 +289,10 @@ mod tests {
         ] {
             assert!(plan_nal(&nal(codec, p, bits, chroma)).is_err(), "{codec:?} profile {p} {bits}-bit chroma {chroma}");
         }
+        // field-coded High profile 4:2:0 is taken (AVCHD 1080i)
         let mut field_coded = nal(NalCodec::H264, 100, 8, 1);
         field_coded.interlaced = true;
-        assert!(plan_nal(&field_coded).is_err());
+        assert!(plan_nal(&field_coded).is_ok());
         // luma and chroma depths that differ
         let mut mixed = nal(NalCodec::Hevc, 2, 10, 1);
         mixed.bit_depth_chroma = 8;

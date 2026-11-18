@@ -2,7 +2,8 @@
 //! and MPEG-1/2 video elementary streams (`.m2v`, `.m1v`).
 //!
 //! - Demux and the access-unit index come from `craft_media::mpegts` (built when the file opens).
-//! - Video: MPEG-1/2 (our decoder), H.264 and HEVC (Annex B byte streams, our decoders) with
+//! - Video: MPEG-1/2 (our decoder), H.264 and HEVC (Annex B byte streams, our decoders; H.264 our
+//!   decoder cannot do, field-coded AVCHD for one, goes to the OS hardware decoder, see `mpeg_hw`) with
 //!   GOP-aware random access ([`crate::gop`]). Frames are presented in display order, from the
 //!   first random-access picture; display order comes from the PTS (or, without timestamps, the
 //!   GOP and temporal reference). Leading pictures of an open GOP decode from the previous GOP.
@@ -21,7 +22,7 @@ use filmcraft_time::{FrameRate, Tick};
 
 use crate::CodecError;
 use crate::gop::{GopCache, VideoSamples};
-use crate::video::{H264Decoder, HevcDecoder, Mpeg2Decoder, VideoDecoder};
+use crate::video::{HevcDecoder, Mpeg2Decoder, VideoDecoder};
 
 /// An MPEG-1/2 video elementary stream starts with a sequence header.
 fn is_video_es(head: &[u8]) -> bool {
@@ -410,7 +411,7 @@ impl MpegSource {
             }
             VKind::H264 | VKind::Hevc => {
                 // decode up to the first frame for size, aspect and colour
-                let mut dec: Box<dyn VideoDecoder> = if v.kind == VKind::H264 { Box::new(H264Decoder::annexb()) } else { Box::new(HevcDecoder::annexb()) };
+                let mut dec: Box<dyn VideoDecoder> = if v.kind == VKind::H264 { crate::mpeg_hw::h264() } else { Box::new(HevcDecoder::annexb()) };
                 let mut frame = None;
                 for i in 0..v.units.len().min(32) {
                     if let Some(f) = dec.decode(&self.read_unit(v, i)?, i as i64)?.into_iter().next() {
@@ -785,7 +786,7 @@ impl VideoSamples for MpegVideo<'_> {
         }
         Ok(match self.v.kind {
             VKind::Mpeg2 => Box::new(Mpeg2Decoder::new(self.v.header.clone())),
-            VKind::H264 => Box::new(H264Decoder::annexb()),
+            VKind::H264 => crate::mpeg_hw::h264(),
             VKind::Hevc => Box::new(HevcDecoder::annexb()),
         })
     }

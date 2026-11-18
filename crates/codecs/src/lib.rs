@@ -30,6 +30,7 @@ mod hw_frame;
 pub mod mkv;
 pub mod mp4;
 pub mod mpeg;
+mod mpeg_hw;
 pub mod mxf;
 pub mod ogg;
 mod stream_color;

@@ -42,7 +42,7 @@ let availability = filmcraft_platform::register(); // Available("VideoToolbox") 
     picture that is not a Direct3D 11 texture (what Microsoft's decoders return when they fall back
     to software inside the MFT) fails the stream, so `HybridDecoder` continues with our decoder.
     Windows' own software decoding is never used in place of ours.
-  - *Declined up front* (our decoder is used): field-coded H.264, H.264 profiles other than
+  - *Declined up front* (our decoder is used): H.264 profiles other than
     Baseline / Main / High, 10-bit H.264, 4:2:2 / 4:4:4 / monochrome, HEVC profiles other than
     Main / Main Still Picture / Main 10, VP9 profiles 1 / 3 (4:2:2 / 4:4:4 / RGB) and 12-bit, AV1
     profiles 1 / 2 and 12-bit, larger than 8192×8192, no Direct3D 11 video device, no DXVA decoder
@@ -279,8 +279,7 @@ level 4 High tier, which many hardware decoders refuse; it is now level 4.1 Main
 ## Guarantees
 
 - **Never undecodable:** the factory declines (returns `None`, so the software decoder is used)
-  when Settings ▸ Playback ▸ Hardware decoding is Off, for formats it does not take (field-coded
-  H.264, bit depths other than 8 / 10, 4:4:4 or monochrome, luma / chroma depth mismatch, larger
+  when Settings ▸ Playback ▸ Hardware decoding is Off, for formats it does not take (bit depths other than 8 / 10, 4:4:4 or monochrome, luma / chroma depth mismatch, larger
   than 8192×8192; on Windows also 4:2:2 and the profiles listed above; on Linux everything but
   8-bit 4:2:0 progressive H.264 and 4:2:0 HEVC Main / Main 10) and when the OS cannot create a hardware session (VideoToolbox), a
   GPU-backed decoder (Media Foundation) or a VA-API configuration and context (Linux).
@@ -350,7 +349,7 @@ Details in [docs/performance.md](../../docs/performance.md).
 
 Zero-copy upload of decoded pictures into wgpu textures (`CVPixelBuffer`s on macOS, Direct3D 11
 textures on Windows); B-frames in the VideoToolbox encoders and 10-bit / HDR HEVC (Main 10) in
-VideoToolbox; VP9 and AV1 through VA-API (Linux), and VA-API encoding; field-coded H.264; 4:4:4 and 4:2:2 encoding with NVENC, HDR
+VideoToolbox; VP9 and AV1 through VA-API (Linux), and VA-API encoding; field-coded H.264 on Linux (VideoToolbox takes it with Apple's own decoder, since Apple's hardware decoders refuse field pictures: verified on macOS with a 1080i AVCHD clip; Media Foundation takes it, not yet verified); 4:4:4 and 4:2:2 encoding with NVENC, HDR
 H.264 with NVENC (HDR H.264 stays with the software encoder), HDR10 MaxCLL / MaxFALL measured from
 the pictures (they are written as 0, unknown), AV1 with NVENC, H.265 with the other Windows vendors and on Linux, and encoders
 from other vendors on Windows (through Media Foundation); VP9 / AV1 4:4:4 and 12-bit on Windows.

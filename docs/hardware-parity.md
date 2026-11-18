@@ -25,7 +25,7 @@ release notes (Premiere does not run on Linux).
 | VP9 profile 0 / 2 | — | software | — | **yes** | software (VA-API VP9 not yet) |
 | AV1 main 8 / 10 | — | software | yes | **yes** | software |
 | ProRes | Apple silicon (M1 Pro / Max and later) | software (fast: 318 fps) | software | software | software |
-| Field-coded H.264 | yes | no | yes | no | no |
+| Field-coded H.264 | yes | **taken through VideoToolbox's own decoder** (Apple's hardware decoders refuse field pictures, so hardware is not required for them; not yet verified) | yes | **taken** (Media Foundation / DXVA; GPU decoding required; not yet verified) | no |
 
 Measured (`cargo xtask bench --hw off|auto`): M4 Pro, CPU per 2160p frame H.264 119 → 4.2 ms,
 HEVC 86 → 3.7 ms, 4K plays with no dropped frames at Full; Intel Iris Xe VA-API H.264 2160p
