@@ -262,6 +262,23 @@ fn typed_times_round_trip_and_junk_is_refused() {
 }
 
 #[test]
+fn typed_times_are_fitted_to_the_clip() {
+    use crate::clip_log::{fit_time, parse_time};
+    use filmcraft_time::{FrameRate, Tick};
+    let rate = FrameRate::default();
+    let frame = rate.tick_of(1).0;
+    let (dur, other) = (rate.tick_of(100).0, Tick(rate.tick_of(50).0));
+    assert_eq!(fit_time(rate, dur, true, other, Tick(rate.tick_of(10).0)), (Tick(rate.tick_of(10).0), false));
+    assert_eq!(fit_time(rate, dur, true, other, Tick(-5)), (Tick(0), true));
+    assert_eq!(fit_time(rate, dur, true, other, Tick(dur + 9)), (Tick(other.0 - frame), true));
+    assert_eq!(fit_time(rate, dur, false, other, Tick(dur + 9)), (Tick(dur), true));
+    assert_eq!(fit_time(rate, dur, false, other, Tick(0)), (Tick(other.0 + frame), true));
+    assert_eq!(fit_time(rate, 0, false, other, Tick(dur * 3)), (Tick(dur * 3), false));
+    assert_eq!(parse_time(rate, "1.5"), Some(Tick::from_seconds_f64(1.5)));
+    assert_eq!(parse_time(rate, "nan"), None);
+}
+
+#[test]
 fn build_sequence_uses_included_rows_in_order_as_one_undo_step() {
     let mut s = demo();
     let (item, _, end) = range(&s);

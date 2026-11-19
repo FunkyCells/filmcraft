@@ -41,6 +41,32 @@ pub struct ClipLogState {
     /// The row being dragged in the ordered view.
     #[serde(skip)]
     pub dragging: Option<u64>,
+    /// Voice: hear only what is said while the talk button (or Ctrl+Shift+J) is held.
+    pub push_to_talk: bool,
+    /// The Hold to talk button is down (set by the panel each frame).
+    #[serde(skip)]
+    pub talk_button: bool,
+    /// A quick tap on the talk button keeps it on until the next tap.
+    #[serde(skip)]
+    pub talk_latched: bool,
+    /// When the button went down (egui time), to tell a tap from a hold.
+    #[serde(skip)]
+    pub talk_pressed_at: Option<f64>,
+    /// The cell to put the cursor in on the next frame: (entry, column). Set after Add from Source
+    /// (its Content cell) and after Enter (the cell below), so the log can be filled in without the mouse.
+    #[serde(skip)]
+    pub focus: Option<(u64, String)>,
+}
+
+impl ClipLogState {
+    /// Whether `(entry, column)` is the cell waiting for the cursor; asking clears the request.
+    pub fn take_focus(&mut self, entry: u64, column: &str) -> bool {
+        let hit = self.focus.as_ref().is_some_and(|(e, c)| *e == entry && c == column);
+        if hit {
+            self.focus = None;
+        }
+        hit
+    }
 }
 
 /// The last selection panel used by the item inspectors. Only the source is retained, so

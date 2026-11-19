@@ -511,9 +511,27 @@ pub fn parse_time(rate: FrameRate, text: &str) -> Option<Tick> {
     if !(fps.is_finite() && fps > 0.0) {
         return None;
     }
+    // seconds with a decimal point ("12.5")
+    if let Ok(secs) = text.trim().parse::<f64>()
+        && text.contains('.')
+    {
+        return (secs.is_finite() && (0.0..=1.0e6).contains(&secs)).then(|| Tick::from_seconds_f64(secs));
+    }
     // `into_iter().next()` reads the frame whether the parser reports failure as an Option or a Result
     let frame = filmcraft_time::parse_timecode(text.trim(), rate, false, 0).into_iter().next()?;
     (0..=rate.frame_at(Tick::MAX)).contains(&frame).then(|| rate.tick_of(frame))
+}
+
+/// A typed Start (`is_start`) or Stop time `t`, fitted to the clip: never before the clip's first
+/// frame or past its end (`duration` ticks, 0 = unknown), and Start stays at least one frame before
+/// `other` (the row's Stop) and Stop at least one frame after it (the row's Start). Returns the
+/// time to store and whether it had to be moved.
+pub fn fit_time(rate: FrameRate, duration: i64, is_start: bool, other: Tick, t: Tick) -> (Tick, bool) {
+    let frame = rate.tick_of(1).0.max(1);
+    let top = if duration > 0 { duration } else { i64::MAX };
+    let (lo, hi) = if is_start { (0, other.0.saturating_sub(frame).max(0)) } else { (other.0.saturating_add(frame).min(top), top) };
+    let fitted = t.0.clamp(lo.min(hi), hi.max(lo));
+    (Tick(fitted), fitted != t.0)
 }
 
 /// The path of a media item's file, empty when it is not a file (a generator).

@@ -4223,6 +4223,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::transcript::commands());
     v.extend(crate::panels::commands());
     v.extend(crate::clip_log::commands());
+    v.extend(crate::voice_log::commands());
+    v.extend(crate::voice_listen::commands());
     v.extend(crate::scopes::commands());
     v.extend(crate::remix::commands());
     v.extend(crate::voiceover::commands());

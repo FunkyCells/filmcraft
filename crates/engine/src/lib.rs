@@ -61,6 +61,8 @@ pub mod source_monitor;
 pub mod sync;
 pub mod transcript;
 pub mod trim;
+pub mod voice_listen;
+pub mod voice_log;
 pub mod voiceover;
 
 use std::sync::Arc;
@@ -554,6 +556,9 @@ pub struct Session {
     pub mcrec: multicam::Recorder,
     /// Voice-over recording: the input device and the take in progress.
     pub voiceover: voiceover::VoiceOver,
+    /// Voice control of the Clip Log: the microphone listener and the row being logged by voice.
+    pub voice_listen: voice_listen::Listener,
+    pub voice_log: voice_log::VoiceLog,
     /// The last `tts.preview` result, for the host to play (Text to Speech ▸ Preview).
     pub tts_preview: Option<Arc<filmcraft_tts::Audio>>,
     /// Synthesized narrations (`tts.render` fills it from a background job).
@@ -671,6 +676,8 @@ impl Session {
             mixrec: Default::default(),
             mcrec: Default::default(),
             voiceover: Default::default(),
+            voice_listen: Default::default(),
+            voice_log: Default::default(),
             tts_preview: None,
             tts_cache: Default::default(),
             trim_play: Default::default(),

@@ -629,6 +629,143 @@ fn clip_log_double_click_numbers_an_empty_order_cell() {
     assert_eq!((order(&mut d, a), order(&mut d, b)), (Some(4), Some(5)));
 }
 
+/// Add from Source puts the cursor in the new row's Content cell, so text (typed or dictated) lands
+/// there; Enter commits and moves down a row; Escape drops what was typed.
+#[test]
+fn clip_log_keyboard_flow_focuses_cells() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let media = d.app().session.project.items.values().find(|i| i.as_media().is_some()).unwrap().clone();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, if duration >= 4 { duration / 2 } else { 1000 })
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    // not `source.open`: it brings the Source monitor to the front of the dock and hides the log
+    d.app().session.state.source_item = Some(item);
+    d.frames(3);
+    d.click("clip_log.add");
+    d.frames(4);
+    let rows = |d: &mut Driver| d.app().session.project.logs[&item].iter().map(|e| (e.id.0, e.content.clone())).collect::<Vec<_>>();
+    assert_eq!(rows(&mut d).len(), 1);
+    // no click: the typed text goes into the new row's Content cell
+    d.ok("ui.type", json!({"text": "man opens door"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    assert_eq!(rows(&mut d)[0].1, "man opens door");
+    // Escape drops a draft
+    let first = rows(&mut d)[0].0;
+    d.click(&format!("clip_log.row.{first}.content"));
+    d.ok("ui.type", json!({"text": " and leaves"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(3);
+    assert_eq!(rows(&mut d)[0].1, "man opens door", "Escape cancels the edit");
+    // Enter moves to the same column of the next row
+    d.exec("log.add", json!({"item": item.0, "start": 0, "end": end}));
+    d.frames(3);
+    let table: Vec<u64> = filmcraft_engine::clip_log::rows(&d.app().session.project, None).iter().map(|r| r.entry.id.0).collect();
+    assert_eq!(table.len(), 2);
+    d.click(&format!("clip_log.row.{}.content", table[0]));
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    d.ok("ui.type", json!({"text": "second"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    let rows = rows(&mut d);
+    assert_eq!(rows.iter().find(|r| r.0 == table[1]).map(|r| r.1.as_str()), Some("second"));
+}
+
+/// Ticking one row offers frame steps and "Playhead" for its Start and Stop.
+#[test]
+fn clip_log_ticked_row_times_can_be_stepped_and_set_from_the_playhead() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let media = d.app().session.project.items.values().find(|i| i.as_media().is_some()).unwrap().clone();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, if duration >= 4 { duration / 2 } else { 1000 })
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    d.exec("log.add", json!({"item": item.0, "start": 0, "end": end}));
+    d.frames(3);
+    let entry = filmcraft_engine::clip_log::rows(&d.app().session.project, None)[0].entry.id.0;
+    let times = |d: &mut Driver| {
+        let rows = filmcraft_engine::clip_log::rows(&d.app().session.project, None);
+        (rows[0].entry.start.0, rows[0].entry.end.0)
+    };
+    d.click(&format!("clip_log.row.{entry}.select"));
+    d.frames(3);
+    d.click("clip_log.time.stop.back");
+    d.frames(3);
+    let (start, stop) = times(&mut d);
+    assert_eq!(start, 0);
+    assert!(stop < end, "one frame earlier");
+    d.click("clip_log.time.stop.forward");
+    d.frames(3);
+    assert_eq!(times(&mut d).1, end);
+}
+
+/// A typed time outside the clip is set to the clip's limit instead of being refused.
+#[test]
+fn clip_log_typed_times_are_fitted_to_the_clip() {
+    let mut d = Driver::demo();
+    let (item, end) = {
+        let media = d.app().session.project.items.values().find(|i| i.as_media().is_some()).unwrap().clone();
+        let duration = media.as_media().map(|m| m.info.duration.0).unwrap_or(0);
+        (media.id, duration)
+    };
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    d.exec("log.add", json!({"item": item.0, "start": 0, "end": end / 2}));
+    d.frames(3);
+    let entry = filmcraft_engine::clip_log::rows(&d.app().session.project, None)[0].entry.id.0;
+    d.click(&format!("clip_log.row.{entry}.stop"));
+    // the click leaves the cursor at the start of the text: Delete clears it, one key per frame
+    for _ in 0..12 {
+        d.ok("ui.key", json!({"key": "Delete"}));
+        d.frames(1);
+    }
+    d.frames(2);
+    d.ok("ui.type", json!({"text": "99:00:00:00"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    let stop = filmcraft_engine::clip_log::rows(&d.app().session.project, None)[0].entry.end.0;
+    assert_eq!(stop, end, "past the end sets the clip's end (status: {})", d.app().ui.status);
+}
+
+/// Voice control is off until the Voice button is pressed (and the button needs speech recognition);
+/// a spoken start/stop/content flow made with `voice.logHear` shows up in the table.
+#[test]
+fn clip_log_voice_is_off_by_default_and_phrases_fill_the_table() {
+    let mut d = Driver::demo();
+    let item = d.app().session.project.items.values().find(|i| i.as_media().is_some()).map(|i| i.id).unwrap();
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    d.app().session.state.source_item = Some(item);
+    d.frames(3);
+    assert!(d.has("clip_log.voice"), "{:?}", d.ids("clip_log."));
+    assert!(!d.app().session.voice_listen.active(), "listening is off by default");
+    assert!(!d.has("clip_log.voice.status"));
+    assert!(d.has("clip_log.voice.push"), "push to talk is a choice made before listening");
+    d.click("clip_log.voice");
+    d.frames(3);
+    // without a recogniser the click does nothing; with one it listens and shows its state
+    assert_eq!(d.app().session.voice_listen.active(), d.has("clip_log.voice.status"));
+    d.exec("voice.listen", json!({"on": false}));
+    d.frames(2);
+    assert!(!d.app().session.voice_listen.active());
+    // the flow, without a microphone
+    d.exec("voice.logHear", json!({"text": "Start."}));
+    d.exec("voice.logHear", json!({"text": "Stop."}));
+    d.exec("voice.logHear", json!({"text": "A man opens the door."}));
+    d.frames(3);
+    let rows = filmcraft_engine::clip_log::rows(&d.app().session.project, None);
+    assert_eq!(rows.len(), 1);
+    let entry = rows[0].entry.id.0;
+    assert_eq!(rows[0].entry.content, "A man opens the door.");
+    assert!(d.has(&format!("clip_log.row.{entry}.content")));
+}
+
 #[test]
 fn timecode_panel_rows_and_modes() {
     let mut d = Driver::demo();

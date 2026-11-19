@@ -16,14 +16,30 @@
 //! (`log.insertOrder`). Order view lists the rows set to Yes in edit order; dragging a row by its
 //! handle renumbers them 1, 2, 3… (`log.setOrder`).
 //!
+//! Keyboard: Add from Source puts the cursor in the new row's Content cell; Enter commits a cell and
+//! moves to the same column of the next row, Tab to the next cell, Escape drops what was typed.
+//! Typed or dictated text goes into the focused cell only, so it cannot reach single-key shortcuts.
+//!
+//! Voice: the Voice button turns on listening (off by default; needs the `whisper` build and a
+//! downloaded speech model). Watch a clip in the Source monitor and say "start" (a row begins at the
+//! playhead), "stop" (it ends there and the cursor moves to its Content cell), then speak the content;
+//! "content" moves the cursor to the active row's Content cell. With a cell of your own choosing
+//! focused, what you say goes into that cell instead (Enter commits). Also "include", "exclude",
+//! "order 3", "next row", "delete row", and times ("start at 1 minute 12"). Push to talk hears only
+//! what is said while the Hold to talk button or Ctrl+Shift+J is held. A level meter shows what the
+//! microphone delivers, with a warning when it is silent. Use headphones: the microphone
+//! also hears the Source clip's sound.
+//!
 //! The columns share the panel width (File and Content twice as wide as the others); a cell's
 //! full text shows when the pointer rests on it.
 //!
-//! Automation ids: `clip_log.add`, `clip_log.delete`, `clip_log.include`, `clip_log.exclude`,
+//! Automation ids: `clip_log.add`, `clip_log.time.<start|stop>.<back|forward|playhead>` (one row ticked), `clip_log.voice`, `clip_log.voice.push`, `clip_log.voice.talk`, `clip_log.voice.level`, `clip_log.voice.status`, `clip_log.voice.warning`, `clip_log.delete`, `clip_log.include`, `clip_log.exclude`,
 //! `clip_log.number`, `clip_log.import`, `clip_log.select_all`, `clip_log.build`, `clip_log.ordered`, `clip_log.confirm.ok`, `clip_log.confirm.cancel`, `clip_log.order.<entry>.handle`, `clip_log.export`, `clip_log.filter`, `clip_log.empty`, and per row `clip_log.row.<entry>.<select|file|start|stop|content|include|order>`.
 
 use egui::{Rect, Sense, vec2};
-use filmcraft_engine::clip_log::{absolute_path, included_rows, parse_time, rows, timecode};
+use filmcraft_engine::clip_log::{absolute_path, fit_time, included_rows, parse_time, rows, timecode};
+use filmcraft_engine::voice_listen::Heard;
+use filmcraft_engine::voice_log::{Intent, interpret};
 use filmcraft_project::ItemId;
 use filmcraft_time::{FrameRate, Tick};
 use serde_json::{Value, json};
@@ -39,6 +55,8 @@ struct RowView {
     /// The file's full path (its folder), shown on hover; the file name when it has none.
     path: String,
     rate: FrameRate,
+    /// The clip's length in ticks (0 when unknown).
+    duration: i64,
     start: Tick,
     end: Tick,
     content: String,
@@ -94,6 +112,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     first
                 );
             }
+            Ok(done) if command == "log.addFromSource" => {
+                if let Some(entry) = done["entry"].as_u64() {
+                    state.focus = Some((entry, "content".to_owned()));
+                }
+            }
             Ok(done) if command == "log.buildSequence" => {
                 app.ui.status = tlf!("Built a sequence of {count} clips from the log", count = done["clips"]);
             }
@@ -104,6 +127,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // rows that no longer exist (deleted, undone) cannot stay ticked
     let existing: std::collections::BTreeSet<u64> = rows(&app.session.project, None).iter().map(|r| r.entry.id.0).collect();
     state.selected.retain(|id| existing.contains(id));
+    if state.focus.as_ref().is_some_and(|(id, _)| !existing.contains(id)) {
+        state.focus = None;
+    }
     app.ui.panels.clip_log = state;
 }
 
@@ -118,6 +144,7 @@ fn collect(app: &FilmcraftApp, filter: &str) -> Vec<RowView> {
             path: if r.path.is_empty() { r.file.clone() } else { absolute_path(&app.session.media, &r.path) },
             file: r.file,
             rate: r.rate,
+            duration: app.session.project.item(r.item).and_then(filmcraft_project::ProjectItem::as_media).map_or(0, |m| m.info.duration.0),
             start: r.entry.start,
             end: r.entry.end,
             content: r.entry.content.clone(),
@@ -131,8 +158,17 @@ fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, act
     let shown = collect(app, &state.filter);
     let selected: Vec<u64> = shown.iter().filter(|r| state.selected.contains(&r.entry)).map(|r| r.entry).collect();
     toolbar(app, ui, state, actions, &selected);
+    if let (false, [one]) = (state.ordered, selected.as_slice())
+        && let Some(r) = shown.iter().find(|r| r.entry == *one)
+    {
+        time_editor(app, ui, actions, r);
+    }
     let widths = Widths::for_panel(ui.available_width());
     if state.ordered {
+        state.focus = None; // no editable cells here
+        if app.session.voice_listen.active() {
+            filmcraft_engine::voice_listen::stop(&mut app.session);
+        }
         ordered_view(app, ui, state, actions, widths);
         return;
     }
@@ -149,8 +185,9 @@ fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, act
                 ui.label(egui::RichText::new(crate::i18n::t(head)).strong());
             }
             ui.end_row();
-            for r in &shown {
-                row(app, ui, state, actions, r, widths);
+            for (i, r) in shown.iter().enumerate() {
+                let below = shown.get(i + 1).map(|n| n.entry);
+                row(app, ui, state, actions, (r, below), widths);
                 ui.end_row();
             }
         });
@@ -193,6 +230,7 @@ fn toolbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, 
             actions.push(("log.addFromSource", json!({})));
         }
         order_view_toggle(app, ui, state);
+        voice_button(app, ui, state);
         if !selected.is_empty() {
             selection_buttons(app, ui, actions, selected);
         }
@@ -200,6 +238,33 @@ fn toolbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, 
         export_button(app, ui, actions);
         let r = ui.add(egui::TextEdit::singleline(&mut state.filter).hint_text(tl!("Filter by file or content")).desired_width(180.0));
         app.auto.add_response("clip_log.filter", &r, tl!("Filter log entries"));
+    });
+}
+
+/// Shown while exactly one row is ticked: step its Start or Stop by a frame, or set it to the Source
+/// playhead (enabled when that row's clip is the one open in Source). Typing a time in the cell works too.
+fn time_editor(app: &mut FilmcraftApp, ui: &mut egui::Ui, actions: &mut Vec<Action>, r: &RowView) {
+    let on_source = app.session.state.source_item == Some(r.item);
+    let head = app.session.state.source_playhead;
+    let frame = r.rate.tick_of(1).0;
+    ui.horizontal_wrapped(|ui| {
+        for (column, key, now) in [("start", "start", r.start), ("stop", "end", r.end)] {
+            ui.label(egui::RichText::new(if column == "start" { tl!("Start") } else { tl!("Stop") }).strong());
+            let mut set = |ui: &mut egui::Ui, id: &str, label: &str, tip: &str, to: Option<i64>| {
+                let resp = ui.add_enabled(to.is_some(), egui::Button::new(label)).on_hover_text(tip);
+                app.auto.add_response(&format!("clip_log.time.{column}.{id}"), &resp, tip);
+                if let (true, Some(t)) = (resp.clicked(), to) {
+                    let mut params = json!({"entry": r.entry});
+                    params[key] = json!(t);
+                    actions.push(("log.edit", params));
+                }
+            };
+            set(ui, "back", "-1f", tl!("One frame earlier"), (frame > 0).then_some(now.0.saturating_sub(frame)));
+            set(ui, "forward", "+1f", tl!("One frame later"), (frame > 0).then_some(now.0.saturating_add(frame)));
+            let at = r.rate.tick_of(r.rate.frame_at(head)).0;
+            set(ui, "playhead", tl!("Playhead"), tl!("Set to the Source playhead"), on_source.then_some(at));
+            ui.add_space(12.0);
+        }
     });
 }
 
@@ -317,7 +382,8 @@ fn export_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, actions: &mut Vec<Ac
     }
 }
 
-fn row(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, actions: &mut Vec<Action>, r: &RowView, w: Widths) {
+/// One row; `below` is the entry of the row under it (where Enter moves the cursor).
+fn row(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, actions: &mut Vec<Action>, (r, below): (&RowView, Option<u64>), w: Widths) {
     let mut ticked = state.selected.contains(&r.entry);
     let tick = ui.checkbox(&mut ticked, "");
     app.auto.add_response(&row_id(r.entry, "select"), &tick, tl!("Select log entry"));
@@ -344,22 +410,19 @@ fn row(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, acti
 
     for (column, time) in [("start", r.start), ("stop", r.end)] {
         let text = timecode(r.rate, time);
-        let (resp, committed) = cell(ui, r.entry, column, &text, w.narrow);
+        let want = state.take_focus(r.entry, column);
+        let (resp, committed) = cell(ui, r.entry, column, &text, w.narrow, want);
+        enter_moves_down(ui, state, &resp, column, below);
         let resp = hover(resp, &text);
         app.auto.add_response(&row_id(r.entry, column), &resp, &text);
         if let Some(typed) = committed {
-            match parse_time(r.rate, &typed) {
-                Some(t) => {
-                    let mut params = json!({"entry": r.entry});
-                    params[if column == "start" { "start" } else { "end" }] = json!(t.0);
-                    actions.push(("log.edit", params));
-                }
-                None => app.ui.status = tlf!("`{text}` is not a time. Use hh:mm:ss:ff or a frame count.", text = typed.trim()),
-            }
+            commit_time(app, actions, r, column, &typed);
         }
     }
 
-    let (resp, committed) = cell(ui, r.entry, "content", &r.content, w.wide);
+    let want = state.take_focus(r.entry, "content");
+    let (resp, committed) = cell(ui, r.entry, "content", &r.content, w.wide, want);
+    enter_moves_down(ui, state, &resp, "content", below);
     let resp = hover(resp, &r.content);
     app.auto.add_response(&row_id(r.entry, "content"), &resp, tl!("Content"));
     if let Some(typed) = committed {
@@ -378,13 +441,16 @@ fn row(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, acti
     }
 
     let order = r.order.map(|n| n.to_string()).unwrap_or_default();
-    let (resp, committed) = cell(ui, r.entry, "order", &order, w.narrow);
+    let want = state.take_focus(r.entry, "order");
+    let (resp, committed) = cell(ui, r.entry, "order", &order, w.narrow, want);
+    enter_moves_down(ui, state, &resp, "order", below);
     app.auto.add_response(&row_id(r.entry, "order"), &resp, &order);
     // a double click on an empty, untouched Order cell takes the next free number (the row need
     // not be ticked); a cell that has a number, or text typed into it, is left alone
     let typed = ui.data(|d| d.get_temp::<String>(draft_id(r.entry, "order"))).unwrap_or_default();
     let resp = if order.is_empty() { hover(resp, tl!("Double-click for the next free number")) } else { resp };
-    if resp.double_clicked() && order.is_empty() && typed.trim().is_empty() {
+    let double = resp.double_clicked() || pressed_twice(ui, &resp, r.entry);
+    if double && order.is_empty() && typed.trim().is_empty() {
         // leave the cell, or its empty draft would be committed over the new number
         resp.surrender_focus();
         ui.data_mut(|d| d.remove::<String>(draft_id(r.entry, "order")));
@@ -407,27 +473,380 @@ fn row(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState, acti
     }
 }
 
+/// A typed Start or Stop: read as a time, fitted to the clip (a time outside it, or crossing the
+/// row's other end, is set to the nearest limit) and stored with `log.edit`.
+fn commit_time(app: &mut FilmcraftApp, actions: &mut Vec<Action>, r: &RowView, column: &str, typed: &str) {
+    let Some(t) = parse_time(r.rate, typed) else {
+        app.ui.status = tlf!("`{text}` is not a time. Use hh:mm:ss:ff, seconds like 12.5, or a frame count.", text = typed.trim());
+        return;
+    };
+    let is_start = column == "start";
+    let (t, moved) = fit_time(r.rate, r.duration, is_start, if is_start { r.end } else { r.start }, t);
+    if moved {
+        app.ui.status = tlf!("`{text}` is outside the clip; set to {limit}.", text = typed.trim(), limit = timecode(r.rate, t));
+    }
+    let mut params = json!({"entry": r.entry});
+    params[if is_start { "start" } else { "end" }] = json!(t.0);
+    actions.push(("log.edit", params));
+}
+
+/// Two presses on the cell within 0.8 s. Counted here, from the pointer, because a text field does
+/// not always report `double_clicked()` (its own click handling takes the presses).
+fn pressed_twice(ui: &egui::Ui, resp: &egui::Response, entry: u64) -> bool {
+    let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+    if !pressed || !ui.rect_contains_pointer(resp.rect) {
+        return false;
+    }
+    let id = egui::Id::unique(("clip-log-press", entry));
+    let now = ui.input(|i| i.time);
+    let last: Option<f64> = ui.data(|d| d.get_temp(id));
+    let twice = last.is_some_and(|t| now - t < 0.8);
+    ui.data_mut(|d| {
+        if twice {
+            d.remove::<f64>(id);
+        } else {
+            d.insert_temp(id, now);
+        }
+    });
+    twice
+}
+
 /// Where a cell keeps what is being typed into it.
-fn draft_id(entry: u64, column: &'static str) -> egui::Id {
+fn draft_id(entry: u64, column: &str) -> egui::Id {
     egui::Id::unique(("clip-log-draft", entry, column))
 }
 
+/// Enter in a cell moves the cursor to the same column of the next row (the last row stays put).
+fn enter_moves_down(ui: &egui::Ui, state: &mut ClipLogState, resp: &egui::Response, column: &str, below: Option<u64>) {
+    if resp.lost_focus()
+        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        && let Some(next) = below
+    {
+        state.focus = Some((next, column.to_owned()));
+    }
+}
+
 /// A text cell: shows `current` until it is focused, keeps the typed draft while it is, and
-/// returns the draft once it loses focus with a changed value.
-fn cell(ui: &mut egui::Ui, entry: u64, column: &'static str, current: &str, width: f32) -> (egui::Response, Option<String>) {
+/// returns the draft once it loses focus with a changed value. Escape drops the draft instead;
+/// `want_focus` puts the cursor in the cell (and scrolls it into view). Text a command adds to the
+/// row meanwhile (voice) shows in the cell as long as nothing was typed into it.
+fn cell(ui: &mut egui::Ui, entry: u64, column: &'static str, current: &str, width: f32, want_focus: bool) -> (egui::Response, Option<String>) {
     let draft_id = draft_id(entry, column);
+    let base_id = egui::Id::unique(("clip-log-base", entry, column));
+    let base: Option<String> = ui.data(|d| d.get_temp(base_id));
     let mut draft: String = ui.data(|d| d.get_temp(draft_id)).unwrap_or_else(|| current.to_owned());
+    if base.as_ref().is_some_and(|b| b != current && draft == *b) {
+        draft = current.to_owned();
+    }
     let response = ui.add(egui::TextEdit::singleline(&mut draft).id_salt(("clip-log-edit", entry, column)).desired_width(width));
+    // Order takes digits only; Start and Stop take a time (digits, ':' and '.')
+    match column {
+        "order" => draft.retain(|c| c.is_ascii_digit()),
+        "start" | "stop" => draft.retain(|c| c.is_ascii_digit() || c == ':' || c == '.'),
+        _ => {}
+    }
+    if want_focus {
+        response.request_focus();
+        response.scroll_to_me(None);
+    }
+    // Escape leaves the cell and drops what was typed
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) && (response.has_focus() || response.lost_focus()) {
+        response.surrender_focus();
+        ui.data_mut(|d| {
+            d.remove::<String>(draft_id);
+            d.remove::<String>(base_id);
+            d.remove::<(u64, String)>(last_cell_id());
+        });
+        return (response, None);
+    }
     let mut committed = None;
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(draft_id, draft));
+    if response.has_focus() || want_focus {
+        let now = ui.input(|i| i.time);
+        ui.data_mut(|d| {
+            d.insert_temp(draft_id, draft);
+            d.insert_temp(base_id, current.to_owned());
+            d.insert_temp(editing_id(), (entry, column.to_owned(), now));
+            d.insert_temp(last_cell_id(), (entry, column.to_owned()));
+        });
     } else {
+        // leaving by Enter or Tab ends the editing; a click elsewhere (the talk button) keeps the cell as the voice target
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Tab)) {
+            ui.data_mut(|d| d.remove::<(u64, String)>(last_cell_id()));
+        }
         if response.lost_focus() && draft != current {
             committed = Some(draft);
         }
-        ui.data_mut(|d| d.remove::<String>(draft_id));
+        ui.data_mut(|d| {
+            d.remove::<String>(draft_id);
+            d.remove::<String>(base_id);
+            if d.get_temp::<(u64, String, f64)>(editing_id()).is_some_and(|(e, c, _)| e == entry && c == column) {
+                d.remove::<(u64, String, f64)>(editing_id());
+            }
+        });
     }
     (response, committed)
+}
+
+/// Where the cell being edited by hand is noted (entry, column, time), so a heard phrase can go into it.
+fn editing_id() -> egui::Id {
+    egui::Id::unique("clip-log-editing")
+}
+
+/// Add `text` to what is typed in a cell (it is focused: its draft exists).
+fn inject(ctx: &egui::Context, entry: u64, column: &str, text: &str) {
+    let Some(column) = ["start", "stop", "content", "order"].into_iter().find(|c| *c == column) else { return };
+    let id = draft_id(entry, column);
+    ctx.data_mut(|d| {
+        let typed: String = d.get_temp(id).unwrap_or_default();
+        let joined = if typed.trim().is_empty() { text.to_owned() } else { format!("{} {}", typed.trim_end(), text) };
+        d.insert_temp(id, joined);
+    });
+}
+
+/// The cell last edited by hand (entry, column). It stays after a click on the talk button took the
+/// cursor away, so push-to-talk can still put what is said into it.
+fn last_cell_id() -> egui::Id {
+    egui::Id::unique("clip-log-last-cell")
+}
+
+fn last_cell(ctx: &egui::Context) -> Option<(u64, String)> {
+    ctx.data(|d| d.get_temp::<(u64, String)>(last_cell_id()))
+}
+
+/// The cell the user is typing in, if one was focused in the last moments.
+fn hand_cell(ctx: &egui::Context) -> Option<(u64, String)> {
+    let (entry, column, at) = ctx.data(|d| d.get_temp::<(u64, String, f64)>(editing_id()))?;
+    (ctx.input(|i| i.time) - at < 0.5).then_some((entry, column))
+}
+
+/// Hold this with Ctrl+Shift to talk in push-to-talk mode.
+const TALK_KEY: egui::Key = egui::Key::J;
+
+/// Voice: the button that turns listening on (off by default), the push-to-talk choice and what it hears.
+fn voice_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState) {
+    let on = app.session.voice_listen.active();
+    let can = app.session.transcriber.is_some() || filmcraft_engine::transcript::speech_available();
+    let r = ui.add_enabled(can || on, egui::Button::new(if on { tl!("Voice: on") } else { tl!("Voice") }).selected(on));
+    let tip = if can {
+        tl!("Listen for \"start\", \"stop\", \"content\", \"include\", \"exclude\", \"order 3\", \"next row\" and \"delete row\" while you watch the Source clip. Use headphones.")
+    } else {
+        tl!("Speech recognition is not available in this build (it needs the `whisper` feature).")
+    };
+    let r = r.on_hover_text(tip);
+    app.auto.add_response("clip_log.voice", &r, tl!("Turn voice control of the log on or off"));
+    if r.clicked() {
+        match app.session.execute("voice.listen", json!({"on": !on, "mode": push_mode(state)})) {
+            Ok(_) => app.ui.status = if on { String::new() } else { tl!("Listening. Open a clip in Source, then say \"start\".").to_owned() },
+            Err(e) => app.ui.status = e.to_string(),
+        }
+    }
+    let push = ui.checkbox(&mut state.push_to_talk, tl!("Push to talk"));
+    let push = push.on_hover_text(tl!("Only what you say while holding the button (or Ctrl+Shift+J) is heard"));
+    app.auto.add_response("clip_log.voice.push", &push, tl!("Hear only what is said while the talk button is held"));
+    if push.changed() && on {
+        let _ = app.session.execute("voice.listen", json!({"on": true, "mode": push_mode(state)}));
+    }
+    if on {
+        voice_status(app, ui, state);
+    }
+}
+
+fn push_mode(state: &ClipLogState) -> &'static str {
+    if state.push_to_talk { "push" } else { "auto" }
+}
+
+/// Hold the button to talk; a quick tap keeps it on until the next tap (for a mouse that cannot hold).
+fn talk_button(ui: &egui::Ui, talk: &egui::Response, state: &mut ClipLogState) {
+    let now = ui.input(|i| i.time);
+    let down = talk.is_pointer_button_down_on();
+    if down && state.talk_pressed_at.is_none() {
+        state.talk_pressed_at = Some(now);
+    }
+    if talk.clicked() {
+        let tap = state.talk_pressed_at.is_some_and(|t| now - t < 0.35);
+        state.talk_latched = tap && !state.talk_latched;
+    }
+    if !down {
+        state.talk_pressed_at = None;
+    }
+    state.talk_button = down || state.talk_latched;
+}
+
+/// While listening: the talk button, the level, the phrase last heard, and a warning when the
+/// microphone delivers nothing.
+fn voice_status(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState) {
+    if app.session.voice_listen.push() {
+        let label = if app.session.voice_listen.talking() { tl!("Talking… (tap to stop)") } else { tl!("Hold to talk") };
+        let talk = ui.add(egui::Button::new(label).selected(app.session.voice_listen.talking()));
+        app.auto.add_response("clip_log.voice.talk", &talk, tl!("Hold while speaking"));
+        talk_button(ui, &talk, state);
+    } else {
+        state.talk_latched = false;
+        state.talk_button = false;
+    }
+    let level = ((app.session.voice_listen.level_db() + 60.0) / 60.0).clamp(0.0, 1.0);
+    let meter = ui.add(egui::ProgressBar::new(level).desired_width(70.0));
+    app.auto.add_response("clip_log.voice.level", &meter, tl!("Microphone level"));
+    let l = &app.session.voice_listen;
+    let status = match l.state() {
+        "loading" => tl!("loading the speech model…"),
+        "recognising" => tl!("recognising…"),
+        _ if l.push() => tl!("hold to talk"),
+        _ => tl!("listening"),
+    };
+    let v = &app.session.voice_log;
+    let text = if v.heard.is_empty() { status.to_owned() } else { format!("{status} · “{}” {}", v.heard, v.note) };
+    let r = ui.label(text.clone());
+    app.auto.add_response("clip_log.voice.status", &r, &text);
+    if l.silent_secs() > 4.0 {
+        let warning = tlf!(
+            "No sound from the microphone ({device}). Check System Settings ▸ Privacy & Security ▸ Microphone and the input device.",
+            device = l.device()
+        );
+        let r = ui.colored_label(ui.visuals().warn_fg_color, warning.clone());
+        app.auto.add_response("clip_log.voice.warning", &r, &warning);
+    }
+}
+
+/// Every frame while listening (even when the panel is hidden, so the microphone never backs up):
+/// pass on the talk key, read the input and act on each phrase heard.
+pub fn pump_voice(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    if !app.session.voice_listen.active() {
+        return;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    let mut state = std::mem::take(&mut app.ui.panels.clip_log);
+    let key = ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_down(TALK_KEY));
+    filmcraft_engine::voice_listen::set_talking(&mut app.session, state.talk_button || key);
+    let heard = filmcraft_engine::voice_listen::poll(&mut app.session);
+    if let Some(error) = app.session.voice_listen.error.clone().filter(|_| !app.session.voice_listen.active()) {
+        app.ui.status = error;
+    }
+    for phrase in &heard {
+        apply_heard(app, ctx, &mut state, phrase);
+    }
+    app.ui.panels.clip_log = state;
+}
+
+/// The row voice control changes: the ticked row (the first one in table order when several are),
+/// else the row whose cell has the cursor, else the row being logged.
+fn voice_target(app: &FilmcraftApp, ctx: &egui::Context, state: &ClipLogState) -> Option<u64> {
+    let ticked = rows(&app.session.project, None).iter().map(|r| r.entry.id.0).find(|id| state.selected.contains(id));
+    ticked.or_else(|| hand_cell(ctx).or_else(|| last_cell(ctx)).map(|(entry, _)| entry))
+}
+
+/// What a heard phrase becomes in a Start, Stop or Order cell: a time in the clip's timecode, or a
+/// whole number. `Err` carries the message when it is neither.
+fn spoken_cell(app: &FilmcraftApp, entry: u64, column: &str, text: &str) -> Result<String, String> {
+    if column == "order" {
+        return filmcraft_engine::voice_log::spoken_number(text).filter(|n| *n >= 1).map(|n| n.to_string()).ok_or_else(|| tlf!("`{text}` is not an order number.", text));
+    }
+    let rate = rows(&app.session.project, None).iter().find(|r| r.entry.id.0 == entry).map(|r| r.rate);
+    let secs = filmcraft_engine::voice_log::spoken_time(text);
+    match (rate, secs) {
+        (Some(rate), Some(secs)) => Ok(timecode(rate, Tick::from_seconds_f64(secs))),
+        _ => Err(tlf!("`{text}` is not a time.", text)),
+    }
+}
+
+/// A time or number spoken for a cell that has no cursor now (the talk button took it): stored in the
+/// row at once, a time fitted to the clip like a typed one.
+fn say_into_row(app: &mut FilmcraftApp, entry: u64, column: &str, text: &str) {
+    let Some((item, rate, begin, finish)) = rows(&app.session.project, None).iter().find(|r| r.entry.id.0 == entry).map(|r| (r.item, r.rate, r.entry.start, r.entry.end)) else {
+        return;
+    };
+    let message = match column {
+        "order" => match filmcraft_engine::voice_log::spoken_number(text).filter(|n| *n >= 1) {
+            Some(n) => app.session.execute("voice.logHear", json!({"text": format!("order {n}")})).err().map(|e| e.to_string()),
+            None => Some(tlf!("`{text}` is not an order number.", text)),
+        },
+        "start" | "stop" => match filmcraft_engine::voice_log::spoken_time(text) {
+            Some(secs) => {
+                let is_start = column == "start";
+                let duration = app.session.project.item(item).and_then(filmcraft_project::ProjectItem::as_media).map_or(0, |m| m.info.duration.0);
+                let (t, _) = fit_time(rate, duration, is_start, if is_start { finish } else { begin }, Tick::from_seconds_f64(secs));
+                let mut params = json!({"entry": entry});
+                params[if is_start { "start" } else { "end" }] = json!(t.0);
+                app.session.execute("log.edit", params).err().map(|e| e.to_string())
+            }
+            None => Some(tlf!("`{text}` is not a time.", text)),
+        },
+        _ => None,
+    };
+    if let Some(m) = message {
+        app.ui.status = m;
+    }
+}
+
+/// Free text for the cell with the cursor, or the one last edited (`Some` when it took the phrase).
+/// Content gets the words added; Start, Stop and Order get a time or a number, and anything else is
+/// refused. `focused`: the cursor is in the cell (its draft takes the text); otherwise the row is
+/// changed directly.
+fn say_into_cell(app: &mut FilmcraftApp, ctx: &egui::Context, (entry, column): (u64, String), focused: bool, text: &str) -> bool {
+    if column == "content" && app.session.voice_log.writing() == Some(entry) {
+        return false; // the engine adds it to the row's content
+    }
+    if column == "content" && !focused {
+        return false;
+    }
+    if column == "content" {
+        inject(ctx, entry, &column, text);
+    } else if focused {
+        match spoken_cell(app, entry, &column, text) {
+            Ok(value) => {
+                ctx.data_mut(|d| d.insert_temp(draft_id(entry, &column), value));
+            }
+            Err(message) => app.ui.status = message,
+        }
+    } else {
+        say_into_row(app, entry, &column, text);
+    }
+    app.session.voice_log.heard = text.to_owned();
+    app.session.voice_log.note = tl!("typed into the cell").to_owned();
+    true
+}
+
+/// One phrase. It changes the ticked row, or when none is ticked the row with the cursor in it. Free
+/// text goes into the cell with the cursor (only digits or a time into Order, Start and Stop);
+/// everything else is the voice flow (`voice.logHear`). "start" adds a row and ticks it; "stop" and
+/// "content" move the cursor to the row's Content cell.
+fn apply_heard(app: &mut FilmcraftApp, ctx: &egui::Context, state: &mut ClipLogState, phrase: &Heard) {
+    let intent = interpret(&phrase.text);
+    let starting = matches!(intent, Intent::Start(_));
+    let target = if starting { None } else { voice_target(app, ctx, state) };
+    if let Some(entry) = target {
+        filmcraft_engine::voice_log::aim(&mut app.session, entry);
+    }
+    if let Intent::Text(text) = &intent {
+        let fits = |c: &(u64, String)| target.is_none_or(|t| t == c.0);
+        let hand = hand_cell(ctx).filter(fits);
+        let cell = hand.clone().or_else(|| last_cell(ctx).filter(fits));
+        if let Some(cell) = cell
+            && say_into_cell(app, ctx, cell, hand.is_some(), text)
+        {
+            return;
+        }
+    }
+    if starting {
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+    }
+    match app.session.execute("voice.logHear", json!({"text": phrase.text, "at": phrase.at.0})) {
+        Ok(done) => {
+            let action = done["action"].as_str().unwrap_or("");
+            let Some(entry) = done["entry"].as_u64() else { return };
+            if matches!(action, "start" | "row") {
+                state.selected = std::iter::once(entry).collect();
+            }
+            if matches!(action, "stop" | "content" | "row") {
+                state.focus = Some((entry, "content".to_owned()));
+            }
+        }
+        Err(e) => app.ui.status = e.to_string(),
+    }
 }
 
 /// Asks before a typed Order that another row has: the rows numbered that or higher move up by one.

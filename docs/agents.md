@@ -309,6 +309,26 @@ End Timecode, Start Ticks, End Ticks, Content, Include, Order, Notes, Path (the 
 folder included); text starting like a
 spreadsheet formula is prefixed with `'`.
 
+**Voice control of the log.** `voice.listen {on?, mode?}` turns microphone listening on or off (off by
+default; needs a build with the `whisper` feature and a downloaded speech model, see
+`transcript.downloadModel`). `mode` is `auto` (phrases are cut at pauses) or `push` (push-to-talk: only
+what is said between `voice.talk {down:true}` and `{down:false}` counts). `voice.poll` reads the input
+and applies each recognised phrase (headless hosts; the desktop app does this every frame), and
+`voice.status` reports the state, mode, input device, level (`levelDb`), seconds of silence
+(`silentSeconds`; a microphone that stays silent usually lacks the macOS permission) and the last error.
+Phrases are acted on by `voice.logHear {text, at?}`, which any agent can call without a microphone:
+"start" adds a one-frame row at the Source playhead (or `at`, media ticks), "start at 1 minute 12" /
+"start at 1:12" at that time, "stop" (also "stop at …") ends the open row and the next phrases are added
+to its content, "content" (optionally followed by text) makes the row the one text goes to, "include" /
+"exclude" set its Include, "order 3" gives it that Order (a row that has it keeps it and the rows from it
+up move up by one), "next row" makes the next row the active one and "delete row" deletes it. Other
+phrases before "stop" are ignored. Each step is one `log.*` command, so one undo step. `voice.logState`
+returns the phase (`idle`, `open`, `writing`), the row and the last phrase. The command words are
+English; recognition uses the language chosen in Settings. In the Clip Log panel the Voice button, the
+Push to talk checkbox (hold the Hold to talk button or Ctrl+Shift+J), a level meter and a no-sound
+warning do the same; with a cell of your own choosing focused, spoken text goes into that cell.
+The microphone also hears the Source clip's sound: use headphones.
+
 The **Clip Log** panel (Window ▸ Clip Log) is the table for these rows: File, Start, Stop, Content,
 Include and Order, with Add from Source, Include, Exclude, Number, Delete, Import CSV…, Export CSV… and a filter (Include, Exclude, Number and Delete appear only while rows
 are ticked). In **Order view** the toolbar has only the Order view checkbox, the Fade sound and Fade image
