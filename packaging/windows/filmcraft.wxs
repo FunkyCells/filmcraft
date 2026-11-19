@@ -3,6 +3,9 @@
   <?ifndef HasCraftFontLicences ?>
   <?define HasCraftFontLicences=0 ?>
   <?endif?>
+  <?ifndef HasSpeechModels ?>
+  <?define HasSpeechModels=0 ?>
+  <?endif?>
   <Package Name="FilmCraft" Manufacturer="Learning Machines LLC" Version="$(var.Version)" UpgradeCode="31E6FB14-9DBC-41DD-B24B-26B71FB31B62" Scope="perUserOrMachine" Compressed="yes" Language="1033">
     <SummaryInformation Description="FilmCraft video editor" Manufacturer="Learning Machines LLC" />
     <?include $(sys.SOURCEFILEDIR)install-policy.wxi?>
@@ -19,7 +22,10 @@
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="CraftSuiteFolder" Name="ArtCraft">
-        <Directory Id="INSTALLFOLDER" Name="FilmCraft" />
+        <Directory Id="INSTALLFOLDER" Name="FilmCraft">
+          <!-- the Whisper speech model (models\whisper-base): voice control and transcripts work offline -->
+          <Directory Id="ModelsFolder" Name="models" />
+        </Directory>
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
@@ -29,6 +35,9 @@
       <ComponentGroupRef Id="CraftFontLicences" />
       <?endif?>
       <ComponentGroupRef Id="FilmcraftFiles" />
+      <?if $(var.HasSpeechModels) = 1 ?>
+      <ComponentGroupRef Id="SpeechModels" />
+      <?endif?>
     </Feature>
   <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <UI>
@@ -41,6 +50,11 @@
     <?if $(var.HasCraftFontLicences) = 1 ?>
     <ComponentGroup Id="CraftFontLicences" Directory="INSTALLFOLDER">
       <Files Include="$(var.DocsDir)\**" />
+    </ComponentGroup>
+    <?endif?>
+    <?if $(var.HasSpeechModels) = 1 ?>
+    <ComponentGroup Id="SpeechModels" Directory="ModelsFolder">
+      <Files Include="$(var.ModelsDir)\**" />
     </ComponentGroup>
     <?endif?>
     <ComponentGroup Id="FilmcraftFiles" Directory="INSTALLFOLDER">

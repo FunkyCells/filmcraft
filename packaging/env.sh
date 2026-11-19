@@ -76,3 +76,27 @@ sha256() {
   if command -v sha256sum >/dev/null; then sha256sum "$file" | cut -d' ' -f1; else shasum -a 256 "$file" | cut -d' ' -f1; fi
   return 0
 }
+
+# Download the speech model listed in packaging/speech-model-whisper-base.txt into
+# <dest>/whisper-base (cached in $CARGO_TARGET_DIR/bundled-models), refuse any file whose size or
+# SHA-256 differs from the manifest, and add the licence notice. The weights are never committed.
+fetch_speech_model() {
+  local dest="$1" cache="$CARGO_TARGET_DIR/bundled-models/whisper-base" sha size name url got
+  mkdir -p "$cache" "$dest/whisper-base"
+  while read -r sha size name url; do
+    [[ -z "$sha" || "$sha" == \#* ]] && continue
+    if [[ ! -f "$cache/$name" ]] || [[ "$(sha256 "$cache/$name")" != "$sha" ]]; then
+      echo "==> downloading $name"
+      curl -fL --retry 3 -o "$cache/$name.part" "$url"
+      mv "$cache/$name.part" "$cache/$name"
+    fi
+    got="$(sha256 "$cache/$name")"
+    if [[ "$got" != "$sha" ]] || [[ "$(wc -c <"$cache/$name" | tr -d ' ')" != "$size" ]]; then
+      echo "error: $name does not match packaging/speech-model-whisper-base.txt (sha256 $got)" >&2
+      exit 1
+    fi
+    cp "$cache/$name" "$dest/whisper-base/$name"
+  done <"$ROOT/packaging/speech-model-whisper-base.txt"
+  cp "$ROOT/packaging/whisper-model-NOTICE.txt" "$dest/whisper-base/NOTICE.txt"
+  return 0
+}

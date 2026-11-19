@@ -222,6 +222,14 @@ pub fn installed(models_dir: &Path, m: &ModelInfo) -> bool {
     m.files.iter().all(|f| valid_file(&d.join(f.name), f))
 }
 
+/// All files present with their pinned sizes, without reading them (for a copy shipped inside an
+/// installer, whose files the packaging script already checked against their SHA-256; [`load`](crate::load)
+/// still verifies them before use).
+pub fn present(models_dir: &Path, m: &ModelInfo) -> bool {
+    let d = model_dir(models_dir, m);
+    m.files.iter().all(|f| valid_name(f.name) && std::fs::metadata(d.join(f.name)).is_ok_and(|md| md.is_file() && md.len() == f.size))
+}
+
 /// Bytes still to download for `m` (files already present are skipped).
 pub fn missing_bytes(models_dir: &Path, m: &ModelInfo) -> u64 {
     let d = model_dir(models_dir, m);
@@ -335,6 +343,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The model shipped in the installers (`packaging/speech-model-whisper-base.txt`) is the
+    /// catalogue's `whisper-base`: same files, sizes, checksums and pinned download URLs.
+    #[test]
+    fn packaging_manifest_matches_the_catalogue() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/speech-model-whisper-base.txt");
+        let text = std::fs::read_to_string(path).expect("the packaging manifest");
+        let m = find("whisper-base").unwrap();
+        let rows: Vec<Vec<&str>> = text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| l.split_whitespace().collect()).collect();
+        assert_eq!(rows.len(), m.files.len());
+        for (row, f) in rows.iter().zip(m.files) {
+            assert_eq!(row.as_slice(), [f.sha256, f.size.to_string().as_str(), f.name, f.url], "{}", f.name);
+        }
+    }
+
+    #[test]
+    fn present_checks_sizes_only() {
+        let dir = std::env::temp_dir().join(format!("filmcraft-speech-present-{}", std::process::id()));
+        let m = find("whisper-tiny").unwrap();
+        assert!(!present(&dir, m));
+        let d = model_dir(&dir, m);
+        std::fs::create_dir_all(&d).unwrap();
+        for f in m.files {
+            // right size, wrong content: present, but not installed
+            let file = std::fs::File::create(d.join(f.name)).unwrap();
+            file.set_len(f.size).unwrap();
+        }
+        assert!(present(&dir, m));
+        assert!(!installed(&dir, m));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

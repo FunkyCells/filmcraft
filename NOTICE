@@ -18,6 +18,7 @@ JetBrains Mono font (assets/fonts/JetBrainsMono-Regular.ttf) — OFL-1.1. See as
 Builds made with craft-fonts (CRAFT_FONTS_DIR; all official releases) also embed the fonts listed in
 https://github.com/storytold/craft-fonts/blob/main/ATTRIBUTION.md (BIZ UDPGothic, Shippori Mincho,
 BIZ UDMincho, Noto Sans CJK SC, Noto Sans Arabic, Noto Sans Thai, Noto Sans Georgian) — OFL-1.1. Their licence texts ship with the packages as OFL-<family>.txt.
+OpenAI Whisper "base" speech model (packaged builds only: models/whisper-base, downloaded at package time, not in the repository) — MIT; the Hugging Face conversion is labelled Apache-2.0. Its notice ships next to the model as NOTICE.txt (source: packaging/whisper-model-NOTICE.txt).
 Public-domain film and NASA frames and CC0 music shown in README screenshots (docs/images/) — public domain / CC0-1.0. See ATTRIBUTION.md.
 
 

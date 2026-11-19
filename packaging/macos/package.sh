@@ -58,8 +58,9 @@ echo "==> FilmCraft $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $
 if [[ "$SKIP_BUILD" = 0 ]]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  # Official packages include Kokoro natural voices (downloaded on first use). #2318 #3773
-  (cd "$ROOT" && cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/neural-voices "${args[@]}")
+  # Official packages include Kokoro natural voices (downloaded on first use) #2318 #3773 and Whisper
+  # speech recognition (voice control of the Clip Log, transcripts); the whisper-base model ships in the app.
+  (cd "$ROOT" && cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/neural-voices,filmcraft/whisper "${args[@]}")
 fi
 
 rm -rf "$WORK"
@@ -127,6 +128,9 @@ plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 # licences of the embedded craft-fonts fonts (builds with CRAFT_FONTS_DIR)
 copy_font_licences "$APP/Contents/Resources"
+# The Whisper speech model, so voice control and transcripts work right after installation
+# (filmcraft_engine::transcript::bundled_models_dir reads Contents/Resources/models).
+fetch_speech_model "$APP/Contents/Resources/models"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
 # Today the only nested code is the main executable; frameworks/helpers would be signed here too.

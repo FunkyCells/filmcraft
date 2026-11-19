@@ -35,6 +35,25 @@ pub fn models_dir() -> Option<std::path::PathBuf> {
     crate::autosave::default_data_dir().map(|d| d.join("models"))
 }
 
+/// Where the installer put the speech models it ships (read-only): `models` next to the executable
+/// (Windows installer, portable zip, Linux), or `Contents/Resources/models` inside the macOS app.
+pub fn bundled_models_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [dir.join("models"), dir.parent()?.join("Resources/models")].into_iter().find(|p| p.is_dir())
+}
+
+/// The folder that holds speech model `id`: the one shipped with the app when it has the model,
+/// else the data directory (where downloads go).
+pub fn models_dir_for(id: &str) -> Option<std::path::PathBuf> {
+    if let (Some(bundled), Some(m)) = (bundled_models_dir(), filmcraft_speech::models::find(id))
+        && filmcraft_speech::models::present(&bundled, m)
+    {
+        return Some(bundled);
+    }
+    models_dir()
+}
+
 /// Whether this build can transcribe with Whisper (feature `whisper`).
 pub fn speech_available() -> bool {
     filmcraft_speech::available()
@@ -141,7 +160,7 @@ fn transcriber(s: &Session, p: &Value) -> Result<Arc<dyn Transcriber>> {
     if !filmcraft_speech::available() {
         return Err(EngineError::Other(NO_SPEECH.into()));
     }
-    let dir = models_dir().ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
+    let dir = models_dir_for(model).ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
     filmcraft_speech::load(&dir, model).map_err(speech_err)
 }
 
@@ -433,15 +452,20 @@ fn create_captions(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn models(_: &mut Session, _: &Value) -> Result<Value> {
     let dir = models_dir();
+    let bundled = bundled_models_dir();
     Ok(json!({
         "available": filmcraft_speech::available(),
         "default": filmcraft_speech::models::DEFAULT_MODEL,
         "dir": dir.as_ref().map(|d| d.to_string_lossy().to_string()),
-        "models": filmcraft_speech::models::catalogue().iter().map(|m| json!({
+        "models": filmcraft_speech::models::catalogue().iter().map(|m| {
+            let shipped = bundled.as_ref().is_some_and(|b| filmcraft_speech::models::present(b, m));
+            json!({
             "id": m.id, "name": m.name, "multilingual": m.multilingual, "description": m.description,
             "license": m.license, "source": m.source, "size": m.size(),
-            "installed": dir.as_ref().is_some_and(|d| filmcraft_speech::models::installed(d, m)),
-        })).collect::<Vec<_>>(),
+            "installed": dir.as_ref().is_some_and(|d| filmcraft_speech::models::installed(d, m)) || shipped,
+            "shipped": shipped,
+            })
+        }).collect::<Vec<_>>(),
     }))
 }
 

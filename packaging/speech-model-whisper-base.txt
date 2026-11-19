@@ -1,0 +1,9 @@
+# The speech model shipped inside the macOS app and the Windows installer / portable zip:
+# whisper-base. One line per file: SHA-256, size in bytes, file name, URL (pinned revision).
+# The packaging scripts download these at package time (never committed) and refuse any file whose
+# size or SHA-256 differs. crates/speech/src/models.rs must list the same files: its test
+# `packaging_manifest_matches_the_catalogue` fails when they drift apart.
+a153c53883a6799b6f056b4a8d1a515c9926d03994682ba88a7616618d7da0c1 1983 config.json https://huggingface.co/openai/whisper-base/resolve/e37978b90ca9030d5170a5c07aadb050351a65bb/config.json
+444b3f636d2fff89dd9ecf549e2a085b61f7ff0fa0246d4628bac6a3b8cc9ba4 3807 generation_config.json https://huggingface.co/openai/whisper-base/resolve/e37978b90ca9030d5170a5c07aadb050351a65bb/generation_config.json
+27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566 2480466 tokenizer.json https://huggingface.co/openai/whisper-base/resolve/e37978b90ca9030d5170a5c07aadb050351a65bb/tokenizer.json
+07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b 290403936 model.safetensors https://huggingface.co/openai/whisper-base/resolve/e37978b90ca9030d5170a5c07aadb050351a65bb/model.safetensors

@@ -72,7 +72,14 @@ install any recogniser in `Session::transcriber`, which enables transcription in
 
 ### Models
 
-Weights are **never** bundled or committed. They are downloaded on request into
+Weights are **never committed** to the repository. The packaging scripts (`packaging/macos/package.sh`,
+`packaging/windows/package.ps1`) download `whisper-base` at package time, check every file against
+`packaging/speech-model-whisper-base.txt` (size and SHA-256; a test keeps it equal to the catalogue below)
+and ship it inside the app: `FilmCraft.app/Contents/Resources/models/whisper-base` on macOS,
+`<install folder>\models\whisper-base` for the Windows installer and the portable zip. The app uses a
+shipped model before looking in the data folder (`filmcraft_engine::transcript::models_dir_for`), so
+transcripts and the Clip Log voice control work offline right after installation. Other models, and
+builds made without the packaging scripts, are downloaded on request into
 `<data dir>/models/<id>/` (see `filmcraft_engine::autosave::default_data_dir`), each file pinned to a
 revision of OpenAI's Hugging Face repositories and checked against its SHA-256:
 

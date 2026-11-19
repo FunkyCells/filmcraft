@@ -62,11 +62,35 @@ if (-not $SkipBuild) {
   [Environment]::SetEnvironmentVariable($flagVar, '-C target-feature=+crt-static')
   # Fail the build (rather than warn) if the icon/VERSIONINFO can't be embedded.
   $env:FILMCRAFT_REQUIRE_WINRES = '1'
-  # Official packages include Kokoro natural voices (downloaded on first use). #2318 #3773
-  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/neural-voices --target $Target }
+  # Official packages include Kokoro natural voices (downloaded on first use) #2318 #3773 and Whisper
+  # speech recognition (voice control of the Clip Log, transcripts); the whisper-base model ships in the package.
+  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/neural-voices,filmcraft/whisper --target $Target }
 }
 
 $Bin = Join-Path $TargetDir "$Target\release"
+
+# The Whisper speech model listed in packaging\speech-model-whisper-base.txt, downloaded at package
+# time (never committed; cached in target\bundled-models) and refused unless every file's size and
+# SHA-256 match. It lands in <Dest>\whisper-base, with its licence notice.
+function Get-SpeechModel([string] $Dest) {
+  $cache = Join-Path $TargetDir 'bundled-models\whisper-base'
+  $out = Join-Path $Dest 'whisper-base'
+  New-Item -ItemType Directory -Force -Path $cache, $out | Out-Null
+  foreach ($line in Get-Content (Join-Path $Root 'packaging\speech-model-whisper-base.txt')) {
+    if ($line -match '^\s*(#|$)') { continue }
+    $sha, $size, $name, $url = $line.Trim() -split '\s+'
+    $file = Join-Path $cache $name
+    if (-not (Test-Path $file) -or (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() -ne $sha) {
+      Write-Output "==> downloading $name"
+      Invoke-WebRequest -Uri $url -OutFile "$file.part"
+      Move-Item -Force "$file.part" $file
+    }
+    $got = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+    if ($got -ne $sha -or (Get-Item $file).Length -ne [int64]$size) { throw "$name does not match packaging\speech-model-whisper-base.txt (sha256 $got)" }
+    Copy-Item $file (Join-Path $out $name)
+  }
+  Copy-Item (Join-Path $Root 'packaging\whisper-model-NOTICE.txt') (Join-Path $out 'NOTICE.txt')
+}
 
 # Check both binaries' PE headers before packaging. Machine (COFF header) must match -Arch, so an
 # x64 build can never ship labelled arm64. Subsystem (optional header): 2 = Windows GUI, 3 = console.
@@ -93,6 +117,10 @@ Copy-Item (Join-Path $Bin 'filmcraft.exe'), (Join-Path $Bin 'filmcraft-cli.exe')
 
 & (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'filmcraft.exe') (Join-Path $Stage 'filmcraft-cli.exe')
 
+# The speech model, installed in <install folder>\models (filmcraft_engine::transcript::bundled_models_dir).
+$ModelsStage = Join-Path $Stage 'models'
+Get-SpeechModel $ModelsStage
+
 # ---- font notices for the MSI ------------------------------------------------------------------
 # The portable ZIP already carries these notices; stage the complete files before MSI creation too.
 $Docs = Join-Path $Stage 'font-licences'
@@ -112,7 +140,7 @@ Invoke-Native 'WiX UI extension' { wix extension add -g WixToolset.UI.wixext/5.0
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'filmcraft.wxs') -arch $Arch -ext WixToolset.UI.wixext `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\filmcraft.ico')" `
-    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" `
+    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" -d "ModelsDir=$ModelsStage" -d "HasSpeechModels=1" `
     -o $Msi
 }
 # Check the compiled scope, path and registration contract before signing.
@@ -126,6 +154,7 @@ $Portable = Join-Path $TargetDir "windows-package\filmcraft-$Version-windows-$Ar
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
+Copy-Item -Recurse -LiteralPath $ModelsStage -Destination (Join-Path $Portable 'models')
 # The marker that makes FilmCraft keep its data in .\data next to the exe instead of %APPDATA% (#139).
 Set-Content -Encoding ascii -Path (Join-Path $Portable 'portable.txt') -Value @(
   'FilmCraft portable: preferences, presets, logs and crash recovery are kept in the data folder',
