@@ -30,6 +30,8 @@ pub struct ClipLogState {
     /// Order view: add a sound crossfade at each cut when building, and how long (seconds; 0 = 1).
     pub fade_sound: bool,
     pub fade_sound_secs: f64,
+    /// How far the sound dips at each cut, percent; `None` (never set) = 100, silent at the cut.
+    pub fade_sound_depth: Option<f64>,
     /// The same for the picture (a dip to black).
     pub fade_image: bool,
     pub fade_image_secs: f64,

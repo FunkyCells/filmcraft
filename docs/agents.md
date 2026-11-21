@@ -296,7 +296,7 @@ unset), `log.edit {entry|entries, start?, end?, content?, include?, order?, note
 `log.setInclude {entries, include}`, `log.setOrder {entries}` (numbers the listed rows 1, 2, 3…),
 `log.insertOrder {entry, order}` (the row takes that number; if another row has it, every other row numbered that or higher moves up by one),
 `log.numberNext {entries}` (rows without a number get the next unused numbers; others keep theirs),
-`log.buildSequence {name?, bin?, fadeVideo?, fadeAudio?}` (a new sequence of the rows with include = yes, back to back, by `order`; rows without a number follow in file and time order; one undo step; refused when no row is included; `fadeVideo` / `fadeAudio` = seconds 0.1–10 add a dip to black / a constant-power crossfade centered on each cut, `fadesSkipped` counts cuts where one could not be added),
+`log.buildSequence {name?, bin?, fadeVideo?, fadeAudio?, fadeAudioDepth?}` (a new sequence of the rows with include = yes, back to back, by `order`; rows without a number follow in file and time order; one undo step; refused when no row is included; `fadeVideo` / `fadeAudio` = seconds 0.1–10 add a dip to black / a constant-power crossfade centered on each cut (`fadeAudioDepth` 0–100 %, default 100, how far the sound dips: 100 is silent at the cut, 0 a plain crossfade), `fadesSkipped` counts cuts where one could not be added),
 `log.delete {entry|entries}`, `log.exportCsv {path, item?}` and `log.importCsv {path}` (adds the rows
 of a CSV: an export, or a spreadsheet with the same headers in any order, separated by commas,
 semicolons or tabs; a row goes to the clip with that `Path`, else the one clip with that `File` name,

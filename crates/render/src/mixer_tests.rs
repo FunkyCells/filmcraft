@@ -407,6 +407,50 @@ fn audio_transition_curves() {
     }
 }
 
+#[test]
+fn dip_gain_is_silent_at_the_cut_only_when_asked() {
+    use crate::transitions::dip_gain;
+    for p in [0.0, 0.1, 0.5, 0.9, 1.0] {
+        assert_eq!(dip_gain(p, 0.0), 1.0, "no dip at {p}");
+    }
+    assert_eq!(dip_gain(0.0, 1.0), 1.0);
+    assert_eq!(dip_gain(1.0, 1.0), 1.0);
+    assert!(dip_gain(0.5, 1.0).abs() < 1e-6, "100 % is silent at the cut");
+    assert!(close(dip_gain(0.5, 0.4), 0.6, 1e-6));
+    assert!(close(dip_gain(0.25, 1.0), dip_gain(0.75, 1.0), 1e-6), "symmetric");
+    // hostile values: clamped, never NaN
+    assert!(close(dip_gain(0.5, 7.0), 0.0, 1e-6) && close(dip_gain(0.5, -3.0), 1.0, 1e-6));
+    assert!(dip_gain(f32::NAN, f32::NAN).is_finite() && dip_gain(0.5, f32::INFINITY).is_finite());
+}
+
+/// "Dip to Silence" at 100 % silences the cut of a crossfade whose clips overlap, while 0 % leaves
+/// the crossfade as it was.
+#[test]
+fn audio_transition_dip_silences_the_cut() {
+    fn dc(_: i64, _: usize) -> f32 {
+        0.5
+    }
+    for (dip, at_cut) in [(0.0, 0.5), (100.0, 0.0)] {
+        let mut r = Rig::new(&[dc, dc]);
+        let (a_src, b_src) = (r.track(0).items[0].item, r.track(1).items[0].item);
+        let sec = |s: f64| Tick::from_seconds_f64(s);
+        let a = r.p.make_track_item(a_src, TrackKind::Audio, Tick::ZERO, TimeRange::new(Tick::ZERO, sec(1.0)), FrameRate::FPS_24).unwrap();
+        let b = r.p.make_track_item(b_src, TrackKind::Audio, sec(1.0), TimeRange::new(sec(2.0), sec(1.0)), FrameRate::FPS_24).unwrap();
+        let mut effect = filmcraft_project::vtransition::find_transition("constant_gain", filmcraft_project::EffectKind::AudioTransition).unwrap().instance();
+        effect.params.insert("dip".to_owned(), filmcraft_project::Param::new(filmcraft_project::ParamValue::Float(dip)));
+        let tr = Transition { id: TransitionId(1), effect, start: sec(0.75), duration: sec(0.5), from: Some(a.id), to: Some(b.id), align: Default::default(), reverse: false };
+        r.track(1).items.clear();
+        let t0 = r.track(0);
+        t0.items = vec![a, b];
+        t0.transitions.push(tr);
+        // constant gain of two equal levels sums to 0.5 everywhere; the dip pulls the cut to 0
+        let [l, _] = r.mix(48_000, 1);
+        assert!(close(l[0], at_cut, 1e-5), "dip {dip}: {}", l[0]);
+        let [l, _] = r.mix(35_000, 1);
+        assert!(close(l[0], 0.5, 1e-6), "outside the transition nothing changes");
+    }
+}
+
 /// A transition centred on a cut mixes both clips across its whole length: the outgoing clip plays
 /// on past its out point and the incoming one starts before its in point (their handles), as the
 /// picture does, so the two overlap instead of each just dipping at the cut. The incoming source is

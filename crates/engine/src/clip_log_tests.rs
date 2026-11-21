@@ -321,6 +321,31 @@ fn build_sequence_uses_included_rows_in_order_as_one_undo_step() {
 }
 
 #[test]
+fn sound_fade_depth_is_a_checked_percentage_stored_on_the_transition() {
+    let mut s = demo();
+    let (item, _, end) = range(&s);
+    let (a, b) = (add(&mut s, item, 0, end / 3, "a"), add(&mut s, item, end / 3, end / 2, "b"));
+    for id in [a, b] {
+        s.execute("log.edit", json!({"entry": id, "include": true})).unwrap();
+    }
+    let before = s.project.to_json();
+    for bad in [json!(-1), json!(101), json!("50"), json!(1.0e308)] {
+        assert!(s.execute("log.buildSequence", json!({"fadeAudio": 0.5, "fadeAudioDepth": bad})).is_err(), "{bad}");
+    }
+    assert_eq!(s.project.to_json(), before, "a refused build changes nothing");
+    let dips = |s: &Session, r: &Value| -> Vec<f64> {
+        let seq = s.project.sequence(ItemId(r["sequence"].as_u64().unwrap())).unwrap();
+        seq.audio_tracks.iter().flat_map(|t| t.transitions.iter()).map(|t| t.effect.f64_at("dip", filmcraft_time::Tick::ZERO)).collect()
+    };
+    let r = s.execute("log.buildSequence", json!({"fadeAudio": 0.5, "fadeAudioDepth": 60})).unwrap();
+    assert!(dips(&s, &r).iter().all(|d| *d == 60.0), "{:?}", dips(&s, &r));
+    let r = s.execute("log.buildSequence", json!({"fadeAudio": 0.5})).unwrap();
+    assert!(dips(&s, &r).iter().all(|d| *d == 100.0), "default depth is 100");
+    let r = s.execute("log.buildSequence", json!({"fadeAudio": 0.5, "fadeAudioDepth": 0})).unwrap();
+    assert!(dips(&s, &r).iter().all(|d| *d == 0.0));
+}
+
+#[test]
 fn insert_order_moves_the_rows_at_or_above_up_by_one() {
     let mut s = demo();
     let (item, _, end) = range(&s);

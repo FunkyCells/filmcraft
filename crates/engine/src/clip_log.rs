@@ -416,6 +416,14 @@ fn fade_p(p: &Value, key: &str) -> Result<Option<f64>> {
     }
 }
 
+/// `fadeAudioDepth`: absent or `null` = 100, else a percentage from 0 to 100.
+fn depth_p(p: &Value) -> Result<f64> {
+    match p.get("fadeAudioDepth") {
+        None | Some(Value::Null) => Ok(100.0),
+        Some(v) => v.as_f64().filter(|x| x.is_finite() && (0.0..=100.0).contains(x)).ok_or_else(|| bad(BUILD, "`fadeAudioDepth` must be a percentage from 0 to 100")),
+    }
+}
+
 /// The clip ids that start after the first one on the first video and the first audio track
 /// that hold clips: the incoming clip of each cut.
 fn incoming_clips(s: &Session) -> (Vec<u64>, Vec<u64>) {
@@ -429,21 +437,24 @@ fn incoming_clips(s: &Session) -> (Vec<u64>, Vec<u64>) {
 }
 
 /// A dip to black (picture) or a constant-power crossfade (sound), `secs` long and centered on the
-/// cut before each of `clips`. How many could not be added.
-fn fade_cuts(s: &mut Session, clips: &[u64], command: &str, effect: &str, secs: f64) -> usize {
+/// cut before each of `clips`; `params` are the transition's settings (the sound's `dip`). How many
+/// could not be added.
+fn fade_cuts(s: &mut Session, clips: &[u64], (command, effect): (&str, &str), secs: f64, params: Value) -> usize {
     let frames = (secs * s.sequence_rate().as_f64()).round().clamp(1.0, 100_000.0) as i64;
-    clips.iter().filter(|id| s.execute(command, json!({"clip": **id, "effect": effect, "edge": "in", "frames": frames})).is_err()).count()
+    clips.iter().filter(|id| s.execute(command, json!({"clip": **id, "effect": effect, "edge": "in", "frames": frames, "params": params})).is_err()).count()
 }
 
 /// `log.buildSequence {name?, bin?}`: a new sequence that holds every row with `include` = yes,
 /// back to back, each as the marked range of its file. Rows go by `order` (1 first); rows without a
 /// number follow the numbered ones, in file then time order, as do ties. `fadeVideo` / `fadeAudio`
 /// (seconds, 0.1 to 10) add a dip to black / a constant-power crossfade of that length centered on
-/// each cut; cuts where one cannot be added are counted in `fadesSkipped`. One undo step; refused,
+/// each cut, the sound one dipping to silence by `fadeAudioDepth` percent (default 100: silent at the
+/// cut; 0: a plain crossfade); cuts where one cannot be added are counted in `fadesSkipped`. One undo step; refused,
 /// with nothing changed, when no row is included.
 fn build_sequence(s: &mut Session, p: &Value) -> Result<Value> {
     let name = text_p(p, "name", BUILD)?;
     let (fade_video, fade_audio) = (fade_p(p, "fadeVideo")?, fade_p(p, "fadeAudio")?);
+    let depth = depth_p(p)?;
     let bin = p.get("bin").filter(|v| !v.is_null());
     if bin.is_some_and(|v| v.as_u64().is_none()) {
         return Err(bad(BUILD, "`bin` must be a bin id"));
@@ -475,10 +486,10 @@ fn build_sequence(s: &mut Session, p: &Value) -> Result<Value> {
         let (video, audio) = incoming_clips(s);
         let mut skipped = 0;
         if let Some(secs) = fade_video {
-            skipped += fade_cuts(s, &video, "sequence.applyVideoTransition", "dip_to_black", secs);
+            skipped += fade_cuts(s, &video, ("sequence.applyVideoTransition", "dip_to_black"), secs, json!({}));
         }
         if let Some(secs) = fade_audio {
-            skipped += fade_cuts(s, &audio, "sequence.applyAudioTransition", "constant_power", secs);
+            skipped += fade_cuts(s, &audio, ("sequence.applyAudioTransition", "constant_power"), secs, json!({"dip": depth}));
         }
         Ok(json!({"sequence": made["sequence"], "clips": placed, "fadesSkipped": skipped}))
     })
@@ -684,7 +695,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(SET_ORDER, "Set Log Order", r#"{"entries":[logId in edit order]}"#, set_order, true),
         spec(NUMBER_NEXT, "Number Log Entries", r#"{"entries":[logId in edit order]}"#, number_next, true),
         spec(INSERT_ORDER, "Insert Log Order", r#"{"entry":logId,"order":int}"#, insert_order, true),
-        spec(BUILD, "Build Sequence from Clip Log", r#"{"name":str?,"bin":binId?,"fadeVideo":seconds|null?,"fadeAudio":seconds|null?}"#, build_sequence, true),
+        spec(BUILD, "Build Sequence from Clip Log", r#"{"name":str?,"bin":binId?,"fadeVideo":seconds|null?,"fadeAudio":seconds|null?,"fadeAudioDepth":percent?}"#, build_sequence, true),
         spec(IMPORT, "Import Clip Log from CSV", r#"{"path":str}"#, import::import_csv, true),
         spec(EXPORT, "Export Clip Log as CSV", r#"{"path":str,"item":id?}"#, export_csv, false),
     ]

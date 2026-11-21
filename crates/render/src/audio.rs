@@ -142,9 +142,12 @@ pub(crate) fn track_input_at(
         }
         let dur = (tr.end() - tr.start).to_units_floor(sr as i64).max(1) as f32;
         let base = (s0 - tr.start.to_units_floor(sr as i64)) as f32;
+        let dip = (tr.effect.f64_at("dip", Tick::ZERO) / 100.0) as f32;
         for i in 0..n {
             let p = (base + i as f32) / dur;
             let (ga, gb) = transitions::audio_gains(&tr.effect.effect, p);
+            let dipped = transitions::dip_gain(p, dip);
+            let (ga, gb) = (ga * dipped, gb * dipped);
             for c in 0..w {
                 tbuf.channels[c][off + i] += a.channels[c][i] * ga + b.channels[c][i] * gb;
             }

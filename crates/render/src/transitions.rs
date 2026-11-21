@@ -80,6 +80,15 @@ pub fn audio_gains(kind: &str, p: f32) -> (f32, f32) {
     }
 }
 
+/// The extra gain of an audio transition's "Dip to Silence" (`dip` 0..1) at progress `p`: 1 at both
+/// ends, `1 - dip` in the middle (the cut), so 1 silences the cut whatever the crossfade curve.
+/// Out-of-range or NaN `dip` counts as 0 / 1.
+pub fn dip_gain(p: f32, dip: f32) -> f32 {
+    let dip = if dip.is_nan() { 0.0 } else { dip.clamp(0.0, 1.0) };
+    let p = if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) };
+    1.0 - dip * (1.0 - (2.0 * p - 1.0).abs())
+}
+
 // ---------------------------------------------------------------------------------------------
 // Inputs and parameters
 

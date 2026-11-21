@@ -34,7 +34,7 @@
 //! full text shows when the pointer rests on it.
 //!
 //! Automation ids: `clip_log.add`, `clip_log.time.<start|stop>.<back|forward|playhead>` (one row ticked), `clip_log.voice`, `clip_log.voice.push`, `clip_log.voice.talk`, `clip_log.voice.level`, `clip_log.voice.status`, `clip_log.voice.warning`, `clip_log.delete`, `clip_log.include`, `clip_log.exclude`,
-//! `clip_log.number`, `clip_log.import`, `clip_log.select_all`, `clip_log.build`, `clip_log.ordered`, `clip_log.confirm.ok`, `clip_log.confirm.cancel`, `clip_log.order.<entry>.handle`, `clip_log.export`, `clip_log.filter`, `clip_log.empty`, and per row `clip_log.row.<entry>.<select|file|start|stop|content|include|order>`.
+//! `clip_log.number`, `clip_log.import`, `clip_log.select_all`, `clip_log.build`, `clip_log.ordered`, `clip_log.fade_sound_depth`, `clip_log.confirm.ok`, `clip_log.confirm.cancel`, `clip_log.order.<entry>.handle`, `clip_log.export`, `clip_log.filter`, `clip_log.empty`, and per row `clip_log.row.<entry>.<select|file|start|stop|content|include|order>`.
 
 use egui::{Rect, Sense, vec2};
 use filmcraft_engine::clip_log::{absolute_path, fit_time, included_rows, parse_time, rows, timecode};
@@ -282,6 +282,11 @@ fn fade_secs(saved: f64) -> f64 {
     if FADE_SECS.contains(&saved) { saved } else { 1.0 }
 }
 
+/// The saved sound-fade depth in percent: 100 until the slider is used, always within 0..=100.
+fn fade_depth(saved: Option<f64>) -> f64 {
+    saved.filter(|d| d.is_finite()).map_or(100.0, |d| d.clamp(0.0, 100.0))
+}
+
 /// Order view: whether the build adds a sound crossfade / a picture dip to black at each cut, and
 /// how long it is (0.5, 1, 2, 3 or 4 seconds, shown once the box is ticked).
 fn fade_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogState) {
@@ -290,6 +295,11 @@ fn fade_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &mut ClipLogS
     app.auto.add_response("clip_log.fade_sound", &r, tl!("Fade the sound between clips"));
     if state.fade_sound {
         fade_choice(app, ui, "clip_log.fade_sound_secs", &mut state.fade_sound_secs);
+        let mut depth = fade_depth(state.fade_sound_depth);
+        let slider = ui.add(egui::Slider::new(&mut depth, 0.0..=100.0).suffix(" %").integer().text(tl!("Depth")));
+        let slider = slider.on_hover_text(tl!("How far the sound dips at each cut: 100 % is silent at the middle of the fade, 0 % a plain crossfade"));
+        app.auto.add_response("clip_log.fade_sound_depth", &slider, tl!("Depth of the sound fade, percent"));
+        state.fade_sound_depth = Some(depth);
     }
     let r = ui.checkbox(&mut state.fade_image, tl!("Fade image"));
     let r = r.on_hover_text(tl!("Fade the picture out to black and back in between consecutive clips"));
@@ -346,6 +356,7 @@ fn build_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, state: &ClipLogState,
         let mut params = json!({});
         if state.fade_sound {
             params["fadeAudio"] = json!(fade_secs(state.fade_sound_secs));
+            params["fadeAudioDepth"] = json!(fade_depth(state.fade_sound_depth));
         }
         if state.fade_image {
             params["fadeVideo"] = json!(fade_secs(state.fade_image_secs));

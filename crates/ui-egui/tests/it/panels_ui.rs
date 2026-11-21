@@ -706,6 +706,20 @@ fn clip_log_ticked_row_times_can_be_stepped_and_set_from_the_playhead() {
     assert_eq!(times(&mut d).1, end);
 }
 
+/// The sound fade's depth slider shows only while Fade sound is ticked, in Order view.
+#[test]
+fn clip_log_sound_fade_depth_slider_follows_the_checkbox() {
+    let mut d = Driver::demo();
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.ClipLog"}));
+    d.frames(3);
+    d.click("clip_log.ordered");
+    d.frames(3);
+    assert!(!d.has("clip_log.fade_sound_depth"));
+    d.click("clip_log.fade_sound");
+    d.frames(3);
+    assert!(d.has("clip_log.fade_sound_depth"), "{:?}", d.ids("clip_log."));
+}
+
 /// A typed time outside the clip is set to the clip's limit instead of being refused.
 #[test]
 fn clip_log_typed_times_are_fitted_to_the_clip() {
